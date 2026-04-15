@@ -1,0 +1,10 @@
+{
+  "state": "running",
+  "message": "示例：fine-tune 进行中",
+  "epoch": 2,
+  "total_epochs": 10,
+  "step": 1500,
+  "total_steps": 8000,
+  "percent": 22.5,
+  "updated_at": "2026-04-15T12:00:00Z"
+}

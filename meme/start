@@ -1,0 +1,44 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SERVICE_PREFIX="fish-s2-pro-gpu"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+BASE_PORT=8080
+
+if [[ "$(id -u)" -ne 0 ]]; then
+  echo "[ERROR] Please run as root."
+  exit 1
+fi
+
+if ! command -v nvidia-smi >/dev/null 2>&1; then
+  echo "[ERROR] nvidia-smi not found, cannot detect GPU count."
+  exit 1
+fi
+
+GPU_COUNT="$(nvidia-smi -L | wc -l | tr -d ' ')"
+if [[ -z "${GPU_COUNT}" || "${GPU_COUNT}" -lt 1 ]]; then
+  echo "[ERROR] No NVIDIA GPU detected."
+  exit 1
+fi
+
+if [[ ! -f "/etc/systemd/system/${SERVICE_PREFIX}0.service" ]]; then
+  echo "[INFO] Installing systemd service..."
+  "${SCRIPT_DIR}/setup_fish_s2_service.sh"
+fi
+
+SERVICE_NAMES=()
+for ((GPU_ID=0; GPU_ID<GPU_COUNT; GPU_ID++)); do
+  SERVICE_NAMES+=("${SERVICE_PREFIX}${GPU_ID}")
+done
+
+echo "[INFO] Starting ${GPU_COUNT} service(s): ${SERVICE_NAMES[*]}"
+systemctl restart "${SERVICE_NAMES[@]}"
+sleep 1
+systemctl status "${SERVICE_NAMES[@]}" --no-pager || true
+
+echo
+echo "[OK] Fish Audio S2 Pro is managed in background."
+for ((GPU_ID=0; GPU_ID<GPU_COUNT; GPU_ID++)); do
+  PORT=$((BASE_PORT + GPU_ID))
+  echo "  API${GPU_ID}: http://127.0.0.1:${PORT} (GPU ${GPU_ID})"
+done

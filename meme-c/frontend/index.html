@@ -1,0 +1,195 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Meme C - 语音生成</title>
+  <style>
+    body { font-family: Arial, sans-serif; max-width: 760px; margin: 40px auto; padding: 0 16px; }
+    textarea, input, button, select { width: 100%; padding: 10px; margin-top: 8px; box-sizing: border-box; }
+    button { cursor: pointer; }
+    .muted { color: #666; font-size: 13px; }
+    .row { margin-bottom: 12px; }
+    .ok { color: #0b7a0b; }
+    .err { color: #b00020; white-space: pre-wrap; }
+  </style>
+</head>
+<body>
+  <h2>Meme C 声音复刻服务</h2>
+  <p class="muted">公网访问地址：<b>http://147.139.141.118/</b> · <a href="/admin/">管理后台</a></p>
+
+  <h3>文本转复刻语音</h3>
+
+  <div class="row">
+    <label>文本</label>
+    <textarea id="text" rows="5" placeholder="输入你要合成的文本">你好，这是 Meme C 的前端测试。</textarea>
+  </div>
+
+  <div class="row">
+    <label>参考音色 ID</label>
+    <input id="referenceId" placeholder="例如 my_voice_001" />
+  </div>
+
+  <div class="row">
+    <label>生成模式</label>
+    <select id="mode">
+      <option value="normal">普通模式</option>
+      <option value="sleep">睡前模式（自动加气口）</option>
+    </select>
+  </div>
+
+  <div class="row">
+    <label>语速（1.0=正常，0.85=慢一点）</label>
+    <input id="speed" type="number" step="0.05" min="0.5" max="2.0" value="0.85" />
+  </div>
+  <div class="row">
+    <button id="multiSegBtn">多卡断句流式（DeepSeek 分句 + GPU 轮流）</button>
+    <div class="muted">先由 DeepSeek 返回断句数组，再按句轮流分配到各 Fish GPU；本页按句严格串行播放。</div>
+  </div>
+
+  <div id="status" class="muted">等待操作</div>
+
+  <script>
+    const multiSegBtn = document.getElementById("multiSegBtn");
+    const statusEl = document.getElementById("status");
+
+    // 当前播放 session，用于取消旧播放
+    let currentSession = null;
+
+    async function stopCurrentSession() {
+      if (!currentSession) return;
+      currentSession.cancelled = true;
+      try { await currentSession.ctx.close(); } catch (_) {}
+      currentSession = null;
+    }
+
+    // 注意：ctx 必须在点击事件同步栈中创建，在此函数调用前已完成
+    async function playMultiSegmentNDJSONStream(response, session) {
+      const { ctx } = session;
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let carry = "";
+      // scheduleAt 跟踪下一段音频的计划开始时间，确保严格串行
+      let scheduleAt = ctx.currentTime;
+      let decodeChain = Promise.resolve();
+
+      const enqueueChunk = (obj) => {
+        decodeChain = decodeChain.then(async () => {
+          if (session.cancelled) return;
+          const binStr = atob(obj.mp3_b64);
+          const mp3 = new Uint8Array(binStr.length);
+          for (let j = 0; j < binStr.length; j++) mp3[j] = binStr.charCodeAt(j);
+          const audioBuf = await ctx.decodeAudioData(mp3.buffer.slice(0));
+          if (session.cancelled) return;
+          const src = ctx.createBufferSource();
+          src.buffer = audioBuf;
+          src.connect(ctx.destination);
+          // 严格串行：下一段必须在上一段结束后才开始
+          const startAt = Math.max(scheduleAt, ctx.currentTime + 0.05);
+          src.start(startAt);
+          scheduleAt = startAt + audioBuf.duration;
+          statusEl.className = "muted";
+          statusEl.textContent =
+            "播放进度：第 " + (obj.index + 1) + "/" + obj.total + " 段（" + (obj.upstream || "") + "）";
+        });
+        return decodeChain;
+      };
+
+      while (true) {
+        const { done, value } = await reader.read();
+        carry += decoder.decode(value || new Uint8Array(), { stream: !done });
+        let nl;
+        while ((nl = carry.indexOf("\n")) >= 0) {
+          const line = carry.slice(0, nl).trim();
+          carry = carry.slice(nl + 1);
+          if (!line) continue;
+          let obj;
+          try {
+            obj = JSON.parse(line);
+          } catch (e) {
+            throw new Error("NDJSON 解析失败: " + line.slice(0, 120));
+          }
+          if (obj.type === "meta") {
+            statusEl.className = "muted";
+            statusEl.textContent =
+              "断句 " + obj.count + " 段，正在合成…（计划上游：" + (obj.upstream_plan || []).join(" → ") + "）";
+            continue;
+          }
+          if (obj.type === "error") {
+            throw new Error(obj.message || "合成错误");
+          }
+          if (obj.type === "done") {
+            await decodeChain;
+            if (!session.cancelled) {
+              const remainMs = Math.max(0, (scheduleAt - ctx.currentTime) * 1000);
+              if (remainMs > 0) {
+                await new Promise((resolve) => setTimeout(resolve, remainMs + 100));
+              }
+            }
+            return;
+          }
+          if (obj.type === "chunk" && obj.mp3_b64) {
+            await enqueueChunk(obj);
+          }
+        }
+        if (done) break;
+      }
+      await decodeChain;
+    }
+
+    multiSegBtn.addEventListener("click", async () => {
+      // ★ 关键：AudioContext 必须在点击处理器的同步栈内立即创建，
+      //    否则浏览器 autoplay 策略会让 ctx.currentTime 停滞，
+      //    导致所有分段时间戳相同、同时播放。
+      const ctx = new AudioContext();
+      // 同步取消旧 session（close 是异步，但新 ctx 已在用户手势窗口内创建）
+      await stopCurrentSession();
+      if (ctx.state === "suspended") {
+        await ctx.resume();
+      }
+      const session = { ctx, cancelled: false };
+      currentSession = session;
+
+      const text = document.getElementById("text").value.trim();
+      const referenceId = document.getElementById("referenceId").value.trim();
+      const mode = document.getElementById("mode").value;
+      const speed = Number(document.getElementById("speed").value || "1");
+      if (!text) {
+        statusEl.className = "err";
+        statusEl.textContent = "文本不能为空";
+        return;
+      }
+      statusEl.className = "muted";
+      statusEl.textContent = "请求断句与多段合成…";
+      multiSegBtn.disabled = true;
+      try {
+        const resp = await fetch("/api/tts/multi-segment-stream", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            text,
+            reference_id: referenceId || undefined,
+            mode,
+            speed,
+          }),
+        });
+        if (!resp.ok) {
+          const t = await resp.text();
+          throw new Error("HTTP " + resp.status + "\n" + t);
+        }
+        if (!resp.body) throw new Error("无响应体");
+        await playMultiSegmentNDJSONStream(resp, session);
+        statusEl.className = "ok";
+        statusEl.textContent = "多段流式播放结束。";
+      } catch (e) {
+        if (!session.cancelled) {
+          statusEl.className = "err";
+          statusEl.textContent = "多段流式失败:\n" + e.message;
+        }
+      } finally {
+        multiSegBtn.disabled = false;
+      }
+    });
+  </script>
+</body>
+</html>

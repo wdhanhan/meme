@@ -1,0 +1,35 @@
+# OS / IDE
+.DS_Store
+.vscode/
+.idea/
+
+# Dependencies
+**/node_modules/
+
+# Build outputs
+**/dist/
+**/build/
+
+# Runtime files
+**/logs/
+*.log
+*.out
+*.err
+*.pid
+
+# Environment / secrets
+.env
+.env.*
+!.env.example
+
+# Python cache
+**/__pycache__/
+**/*.pyc
+
+# Local generated data
+meme-c/data/generations.jsonl
+meme-c/data/training_progress.json
+
+# Binaries
+meme-c/backend/backend
+meme-c/backend/meme-c-backend

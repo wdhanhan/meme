@@ -1,0 +1,6 @@
+{
+  "name": "梦幻粉色庇护所",
+  "description": "为您和孩子开启一段被温柔包裹的梦境旅程。克隆您的声音，编织专属的安眠曲。",
+  "requestFramePermissions": ["microphone"],
+  "majorCapabilities": []
+}

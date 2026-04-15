@@ -1,0 +1,88 @@
+@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Be+Vietnam+Pro:wght@300;400;500;600&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --font-headline: "Plus Jakarta Sans", ui-sans-serif, system-ui, sans-serif;
+  --font-body: "Be Vietnam Pro", ui-sans-serif, system-ui, sans-serif;
+  --font-label: "Plus Jakarta Sans", ui-sans-serif, system-ui, sans-serif;
+
+  --color-surface-variant: #e1dbde;
+  --color-on-tertiary: #fff1df;
+  --color-on-tertiary-fixed: #4f3c1b;
+  --color-on-primary-fixed: #000000;
+  --color-primary-container: #ff709f;
+  --color-on-surface-variant: #5e5b5c;
+  --color-surface-dim: #d9d3d6;
+  --color-on-surface: #302e30;
+  --color-secondary-container: #ffccbc;
+  --color-on-secondary-fixed: #503025;
+  --color-inverse-on-surface: #a09c9e;
+  --color-secondary: #785246;
+  --color-background: #fbf5f7;
+  --color-primary: #a7295a;
+  --color-surface-bright: #fbf5f7;
+  --color-on-primary-fixed-variant: #5d002b;
+  --color-tertiary-dim: #614c29;
+  --color-surface-container-highest: #e1dbde;
+  --color-inverse-surface: #0f0e0f;
+  --color-on-tertiary-container: #634e2b;
+  --color-outline-variant: #b0acae;
+  --color-on-secondary-container: #664237;
+  --color-secondary-fixed-dim: #f0beae;
+  --color-tertiary-fixed-dim: #eed0a3;
+  --color-tertiary-fixed: #fddeb0;
+  --color-on-background: #302e30;
+  --color-surface: #fbf5f7;
+  --color-on-tertiary-fixed-variant: #6e5834;
+  --color-on-error: #ffefef;
+  --color-on-primary: #ffeff1;
+  --color-error: #b41340;
+  --color-primary-fixed: #ff709f;
+  --color-error-dim: #a70138;
+  --color-primary-dim: #971b4e;
+  --color-primary-fixed-dim: #f06292;
+  --color-surface-tint: #a7295a;
+  --color-on-primary-container: #4c0022;
+  --color-surface-container-lowest: #ffffff;
+  --color-tertiary: #6e5834;
+  --color-secondary-fixed: #ffccbc;
+  --color-outline: #797678;
+  --color-tertiary-container: #fddeb0;
+  --color-surface-container: #ece7e9;
+  --color-on-secondary-fixed-variant: #704b3f;
+  --color-on-secondary: #ffefeb;
+  --color-on-error-container: #510017;
+  --color-inverse-primary: #fd6c9c;
+  --color-secondary-dim: #6b473b;
+  --color-surface-container-low: #f5eff1;
+  --color-surface-container-high: #e7e1e4;
+
+  --radius-DEFAULT: 1rem;
+  --radius-lg: 2rem;
+  --radius-xl: 3rem;
+}
+
+@layer base {
+  body {
+    @apply font-body bg-background text-on-surface min-h-screen;
+  }
+}
+
+@layer utilities {
+  .premium-card-shadow {
+    box-shadow: 0 20px 40px -15px rgba(167, 41, 90, 0.12);
+  }
+  .glass-header {
+    @apply backdrop-blur-2xl bg-background/80;
+  }
+  .glass-panel {
+    @apply backdrop-blur-2xl bg-white/70;
+  }
+  .dream-gradient {
+    @apply bg-linear-to-br from-primary to-primary-container;
+  }
+  .glass-card {
+    @apply bg-white/40 backdrop-blur-2xl border border-white/50;
+  }
+}
+

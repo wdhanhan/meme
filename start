@@ -1,0 +1,210 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+RUNTIME_DIR="${ROOT_DIR}/.runtime"
+LOG_DIR="${RUNTIME_DIR}/logs"
+FRONT_PID_FILE="${RUNTIME_DIR}/meme-front-c-v2.pid"
+DEFAULT_DEPLOY_ROOT="/mnt/data/root"
+
+START_MEME=1
+START_MEME_C=1
+START_FRONT=1
+FRONT_PORT="3001"
+FRONT_HOST="0.0.0.0"
+FRONT_INSTALL=1
+RESTART_FRONT=0
+ASSUME_MOVED=0
+
+usage() {
+  cat <<'USAGE'
+Usage: ./start [options]
+
+Start all three projects by default:
+  - meme
+  - meme-c
+  - meme-front-c-v2
+
+Options:
+  --only <targets>         Comma-separated: meme,meme-c,front
+  --skip <targets>         Comma-separated: meme,meme-c,front
+  --front-port <port>      Frontend port (default: 3001)
+  --front-host <host>      Frontend host (default: 0.0.0.0)
+  --no-front-install       Skip npm install for frontend
+  --restart-front          Restart frontend dev server if running
+  --assume-moved           Skip absolute-path warning for meme/meme-c
+  -h, --help               Show this help
+
+Examples:
+  ./start
+  ./start --only meme,meme-c
+  ./start --only front --front-port 3100
+  ./start --skip front
+USAGE
+}
+
+contains_target() {
+  local needle="$1"
+  local csv="$2"
+  IFS=',' read -r -a parts <<<"$csv"
+  for t in "${parts[@]}"; do
+    t="$(echo "$t" | xargs)"
+    [[ "$t" == "$needle" ]] && return 0
+  done
+  return 1
+}
+
+parse_targets_only() {
+  local csv="$1"
+  START_MEME=0
+  START_MEME_C=0
+  START_FRONT=0
+  contains_target "meme" "$csv" && START_MEME=1
+  contains_target "meme-c" "$csv" && START_MEME_C=1
+  contains_target "front" "$csv" && START_FRONT=1
+}
+
+parse_targets_skip() {
+  local csv="$1"
+  contains_target "meme" "$csv" && START_MEME=0
+  contains_target "meme-c" "$csv" && START_MEME_C=0
+  contains_target "front" "$csv" && START_FRONT=0
+}
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --only)
+      [[ $# -lt 2 ]] && { echo "[ERROR] --only requires a value"; exit 1; }
+      parse_targets_only "$2"
+      shift 2
+      ;;
+    --skip)
+      [[ $# -lt 2 ]] && { echo "[ERROR] --skip requires a value"; exit 1; }
+      parse_targets_skip "$2"
+      shift 2
+      ;;
+    --front-port)
+      [[ $# -lt 2 ]] && { echo "[ERROR] --front-port requires a value"; exit 1; }
+      FRONT_PORT="$2"
+      shift 2
+      ;;
+    --front-host)
+      [[ $# -lt 2 ]] && { echo "[ERROR] --front-host requires a value"; exit 1; }
+      FRONT_HOST="$2"
+      shift 2
+      ;;
+    --no-front-install)
+      FRONT_INSTALL=0
+      shift
+      ;;
+    --restart-front)
+      RESTART_FRONT=1
+      shift
+      ;;
+    --assume-moved)
+      ASSUME_MOVED=1
+      shift
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      echo "[ERROR] Unknown option: $1"
+      usage
+      exit 1
+      ;;
+  esac
+done
+
+check_sensitive_paths() {
+  # meme / meme-c 的服务配置里仍有绝对路径（按要求暂不改这两块）。
+  if [[ "$ASSUME_MOVED" -eq 1 ]]; then
+    return 0
+  fi
+  if [[ "$START_MEME" -eq 1 || "$START_MEME_C" -eq 1 ]]; then
+    if [[ "$ROOT_DIR" != "${DEFAULT_DEPLOY_ROOT}/meme-git-workspace" ]]; then
+      echo "[WARN] 当前目录: ${ROOT_DIR}"
+      echo "[WARN] meme 与 meme-c 仍依赖绝对路径服务配置（默认 ${DEFAULT_DEPLOY_ROOT}）。"
+      echo "[WARN] 若目录已迁移，请先重建这两套服务配置后再启动。"
+      echo "[WARN] 若你已确认处理，可使用: --assume-moved"
+    fi
+  fi
+}
+
+check_sensitive_paths
+
+mkdir -p "$LOG_DIR"
+
+start_meme() {
+  echo "[INFO] Starting meme ..."
+  bash "${ROOT_DIR}/meme/start"
+}
+
+start_meme_c() {
+  echo "[INFO] Starting meme-c ..."
+  bash "${ROOT_DIR}/meme-c/start"
+}
+
+start_front() {
+  local front_dir="${ROOT_DIR}/meme-front-c-v2"
+  local front_log="${LOG_DIR}/meme-front-c-v2.log"
+
+  if [[ -f "$FRONT_PID_FILE" ]]; then
+    local old_pid
+    old_pid="$(cat "$FRONT_PID_FILE" 2>/dev/null || true)"
+    if [[ -n "$old_pid" ]] && kill -0 "$old_pid" 2>/dev/null; then
+      if [[ "$RESTART_FRONT" -eq 1 ]]; then
+        echo "[INFO] Stopping existing meme-front-c-v2 (pid=$old_pid) ..."
+        kill "$old_pid" || true
+        sleep 1
+      else
+        echo "[INFO] meme-front-c-v2 already running (pid=$old_pid), skip."
+        echo "       Use --restart-front to restart it."
+        return 0
+      fi
+    fi
+  fi
+
+  echo "[INFO] Starting meme-front-c-v2 on ${FRONT_HOST}:${FRONT_PORT} ..."
+  if [[ "$FRONT_INSTALL" -eq 1 ]]; then
+    (cd "$front_dir" && npm install)
+  else
+    if [[ ! -x "${front_dir}/node_modules/.bin/vite" ]]; then
+      echo "[ERROR] Frontend dependencies are missing (vite not found)."
+      echo "        Run once with default install or execute:"
+      echo "        cd ${front_dir} && npm install"
+      return 1
+    fi
+  fi
+
+  (
+    cd "$front_dir"
+    nohup npm run dev -- --port="$FRONT_PORT" --host="$FRONT_HOST" >>"$front_log" 2>&1 &
+    echo $! > "$FRONT_PID_FILE"
+  )
+
+  sleep 1
+  local new_pid
+  new_pid="$(cat "$FRONT_PID_FILE" 2>/dev/null || true)"
+  if [[ -n "$new_pid" ]] && kill -0 "$new_pid" 2>/dev/null; then
+    echo "[OK] meme-front-c-v2 started (pid=$new_pid)"
+    echo "     URL: http://127.0.0.1:${FRONT_PORT}"
+    echo "     Log: $front_log"
+  else
+    echo "[ERROR] Failed to start meme-front-c-v2."
+    echo "        Check log: $front_log"
+    return 1
+  fi
+}
+
+[[ "$START_MEME" -eq 1 ]] && start_meme
+[[ "$START_MEME_C" -eq 1 ]] && start_meme_c
+[[ "$START_FRONT" -eq 1 ]] && start_front
+
+echo
+
+echo "[DONE] startup completed."
+echo "  meme      : $([[ "$START_MEME" -eq 1 ]] && echo started || echo skipped)"
+echo "  meme-c    : $([[ "$START_MEME_C" -eq 1 ]] && echo started || echo skipped)"
+echo "  front     : $([[ "$START_FRONT" -eq 1 ]] && echo started || echo skipped)"
