@@ -11,9 +11,10 @@ import {
 interface SidebarProps {
   activeCategory: string;
   onCategoryChange: (category: string) => void;
+  onStartVoiceClone?: () => void;
 }
 
-export default function Sidebar({ activeCategory, onCategoryChange }: SidebarProps) {
+export default function Sidebar({ activeCategory, onCategoryChange, onStartVoiceClone }: SidebarProps) {
   const navItems = [
     { id: 'radio', icon: Mic2, label: '情感电台' },
     { id: 'stories', icon: BookOpen, label: '童话故事' },
@@ -49,6 +50,7 @@ export default function Sidebar({ activeCategory, onCategoryChange }: SidebarPro
         <motion.button
           whileHover={{ scale: 1.02 }}
           whileTap={{ scale: 0.98 }}
+          onClick={onStartVoiceClone}
           className="w-full py-4 mb-8 bg-primary text-white rounded-full font-bold shadow-lg shadow-primary/20 hover:opacity-90 transition-all"
         >
           开始克隆声音

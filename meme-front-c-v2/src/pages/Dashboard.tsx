@@ -1,15 +1,14 @@
-import { useRef, useState } from 'react';
+import { useState } from 'react';
 import { motion } from 'motion/react';
 import { 
   Star, 
   CloudRain, 
   Settings, 
-  Upload, 
-  PlusCircle, 
   Bot, 
   FileEdit,
   Home,
-  LogIn
+  LogIn,
+  PlusCircle
 } from 'lucide-react';
 import Sidebar from '../components/Sidebar';
 import VoiceCard from '../components/VoiceCard';
@@ -27,103 +26,9 @@ export default function Dashboard({ onNavigate }: DashboardProps) {
   const [activeCategory, setActiveCategory] = useState('stories');
   const [ttsReferenceId, setTtsReferenceId] = useState('');
   const [ttsPlayer, setTtsPlayer] = useState<TtsPlayerBarState | null>(null);
-  const [voiceFile, setVoiceFile] = useState<File | null>(null);
-  const [voiceDurationSec, setVoiceDurationSec] = useState<number | null>(null);
-  const [voiceRefId, setVoiceRefId] = useState('');
-  const [voiceStatus, setVoiceStatus] = useState('点击卡片选择 10-20 秒音频样本');
-  const [voiceStatusKind, setVoiceStatusKind] = useState<'idle' | 'loading' | 'ok' | 'err'>('idle');
-  const [uploadingVoice, setUploadingVoice] = useState(false);
-  const voiceInputRef = useRef<HTMLInputElement | null>(null);
-
-  function authHeaders(): Record<string, string> {
-    const token = localStorage.getItem('memec_auth_token') || '';
-    return token ? { Authorization: `Bearer ${token}` } : {};
-  }
 
   function scrollToTts() {
     document.getElementById('tts-workshop')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-  }
-
-  async function readAudioDurationSec(file: File): Promise<number> {
-    const url = URL.createObjectURL(file);
-    try {
-      const audio = document.createElement('audio');
-      audio.preload = 'metadata';
-      audio.src = url;
-      const duration = await new Promise<number>((resolve, reject) => {
-        audio.onloadedmetadata = () => resolve(audio.duration);
-        audio.onerror = () => reject(new Error('无法解析音频时长'));
-      });
-      if (!Number.isFinite(duration) || duration <= 0) {
-        throw new Error('音频时长无效');
-      }
-      return duration;
-    } finally {
-      URL.revokeObjectURL(url);
-    }
-  }
-
-  async function handlePickVoiceFile(file: File | null) {
-    if (!file) return;
-    if (!file.type.startsWith('audio/')) {
-      setVoiceStatusKind('err');
-      setVoiceStatus('请选择音频文件');
-      setVoiceFile(null);
-      setVoiceDurationSec(null);
-      return;
-    }
-    try {
-      const duration = await readAudioDurationSec(file);
-      setVoiceFile(file);
-      setVoiceDurationSec(duration);
-      setVoiceStatusKind('ok');
-      setVoiceStatus(`已选择：${file.name}（${duration.toFixed(1)} 秒）`);
-    } catch (e) {
-      setVoiceStatusKind('err');
-      setVoiceStatus(`读取音频失败：${e instanceof Error ? e.message : String(e)}`);
-      setVoiceFile(null);
-      setVoiceDurationSec(null);
-    }
-  }
-
-  async function uploadVoiceSample() {
-    if (!voiceFile) {
-      setVoiceStatusKind('err');
-      setVoiceStatus('请先选择 10-20 秒音频');
-      return;
-    }
-    if (!voiceRefId.trim()) {
-      setVoiceStatusKind('err');
-      setVoiceStatus('请填写音色 ID');
-      return;
-    }
-    setUploadingVoice(true);
-    setVoiceStatusKind('loading');
-    setVoiceStatus('上传中…');
-    try {
-      const form = new FormData();
-      form.append('id', voiceRefId.trim());
-      // 后端要求 text 字段，前端固定给占位值即可。
-      form.append('text', 'sample');
-      form.append('audio', voiceFile);
-      const resp = await fetch('/api/references/add', {
-        method: 'POST',
-        headers: authHeaders(),
-        body: form,
-      });
-      const body = await resp.text();
-      if (!resp.ok) {
-        throw new Error(`HTTP ${resp.status}: ${body || '上传失败'}`);
-      }
-      setVoiceStatusKind('ok');
-      setVoiceStatus('上传成功，已可用于复刻。');
-      setTtsReferenceId(voiceRefId.trim());
-    } catch (e) {
-      setVoiceStatusKind('err');
-      setVoiceStatus(`上传失败：${e instanceof Error ? e.message : String(e)}`);
-    } finally {
-      setUploadingVoice(false);
-    }
   }
 
   return (
@@ -169,7 +74,11 @@ export default function Dashboard({ onNavigate }: DashboardProps) {
         </div>
       </header>
 
-      <Sidebar activeCategory={activeCategory} onCategoryChange={setActiveCategory} />
+      <Sidebar
+        activeCategory={activeCategory}
+        onCategoryChange={setActiveCategory}
+        onStartVoiceClone={() => onNavigate('voice-clone')}
+      />
 
       <main className="ml-0 md:ml-72 pt-32 pb-48 px-6 md:px-12 relative min-h-screen">
         {/* Ethereal Background Elements */}
@@ -179,31 +88,14 @@ export default function Dashboard({ onNavigate }: DashboardProps) {
         </div>
 
         <div className="max-w-6xl mx-auto space-y-16">
-          {/* Section 1: Voice Cloning */}
+          {/* Section 1: Voice Selection */}
           <section>
             <div className="flex items-baseline justify-between mb-8">
-              <h3 className="text-2xl font-bold font-headline text-primary tracking-tight">声音复刻</h3>
-              <p className="text-secondary/60 text-sm italic hidden sm:block">用熟悉的声音，编织最温暖的梦境</p>
+              <h3 className="text-2xl font-bold font-headline text-primary tracking-tight">选择音色</h3>
+              <p className="text-secondary/60 text-sm italic hidden sm:block">复刻入口已独立为单独页面</p>
             </div>
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-              {/* Upload Area */}
-              <motion.button
-                type="button"
-                whileHover={{ scale: 1.02 }}
-                onClick={() => voiceInputRef.current?.click()}
-                className="lg:col-span-1 glass-card p-8 rounded-xl border-2 border-white/50 flex flex-col items-center justify-center text-center space-y-4 hover:border-primary/20 transition-colors group cursor-pointer w-full"
-              >
-                <div className="w-16 h-16 rounded-full bg-primary-container/20 flex items-center justify-center text-primary group-hover:scale-110 transition-transform">
-                  <Upload className="w-8 h-8" />
-                </div>
-                <div>
-                  <h4 className="font-bold text-on-surface">上传声音样本</h4>
-                  <p className="text-xs text-secondary/70 mt-1">点击选择音频并上传（10-20 秒）</p>
-                </div>
-              </motion.button>
-
-              {/* Cloned Voices List */}
-              <div className="lg:col-span-2 flex gap-4 overflow-x-auto pb-4 scrollbar-hide">
+            <div className="glass-card rounded-xl border border-white/60 p-4 md:p-5 space-y-5">
+              <div className="flex gap-4 overflow-x-auto pb-2 scrollbar-hide">
                 {VOICES.map((voice) => (
                   <VoiceCard
                     key={voice.id}
@@ -214,65 +106,21 @@ export default function Dashboard({ onNavigate }: DashboardProps) {
                     }}
                   />
                 ))}
-                <button className="flex-shrink-0 w-48 border-2 border-dashed border-primary/20 rounded-xl flex flex-col items-center justify-center space-y-2 text-primary/40 hover:text-primary hover:border-primary transition-all group">
-                  <PlusCircle className="w-8 h-8 group-hover:scale-110 transition-transform" />
-                  <span className="text-xs font-bold">新增克隆</span>
-                </button>
               </div>
-            </div>
-            <input
-              ref={voiceInputRef}
-              type="file"
-              accept="audio/*"
-              className="hidden"
-              onChange={(e) => {
-                void handlePickVoiceFile(e.target.files?.[0] || null);
-                e.currentTarget.value = '';
-              }}
-            />
-            <div className="mt-5 glass-card rounded-xl border border-white/60 p-4 md:p-5 space-y-3">
-              <div className="grid grid-cols-1 gap-3">
-                <input
-                  type="text"
-                  value={voiceRefId}
-                  onChange={(e) => setVoiceRefId(e.target.value)}
-                  placeholder="请输入这个音色的名字（用于音色 ID）"
-                  className="px-4 py-2.5 rounded-full bg-white/70 border border-white/60 text-on-surface placeholder:text-outline/50 focus:ring-2 focus:ring-primary-container outline-hidden"
-                />
-              </div>
-              <div className="flex flex-wrap items-center gap-3">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <p className="text-xs text-secondary/75">
+                  当前用于朗读的参考音色 ID：
+                  <span className="font-semibold text-primary ml-1">{ttsReferenceId || '未选择（将使用系统默认）'}</span>
+                </p>
                 <button
                   type="button"
-                  onClick={() => voiceInputRef.current?.click()}
-                  className="px-4 py-2 rounded-full border border-primary/25 text-primary text-sm font-semibold hover:bg-primary/5 transition-colors"
+                  onClick={() => onNavigate('voice-clone')}
+                  className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-primary text-white text-sm font-semibold hover:opacity-90 transition-opacity"
                 >
-                  重新选择音频
+                  <PlusCircle className="w-4 h-4" />
+                  去声音复刻页
                 </button>
-                <button
-                  type="button"
-                  onClick={() => void uploadVoiceSample()}
-                  disabled={uploadingVoice || !voiceFile}
-                  className="px-5 py-2 rounded-full bg-primary text-white text-sm font-semibold hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed transition-opacity"
-                >
-                  {uploadingVoice ? '上传中…' : '上传声音样本'}
-                </button>
-                {voiceDurationSec !== null && (
-                  <span className="text-xs text-secondary/75">当前音频：{voiceDurationSec.toFixed(1)} 秒</span>
-                )}
               </div>
-              <p
-                className={`text-xs ${
-                  voiceStatusKind === 'err'
-                    ? 'text-red-600'
-                    : voiceStatusKind === 'ok'
-                      ? 'text-emerald-600'
-                      : voiceStatusKind === 'loading'
-                        ? 'text-primary'
-                        : 'text-secondary/70'
-                }`}
-              >
-                {voiceStatus}
-              </p>
             </div>
           </section>
 
