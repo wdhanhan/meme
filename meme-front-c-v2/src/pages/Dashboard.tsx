@@ -35,6 +35,11 @@ export default function Dashboard({ onNavigate }: DashboardProps) {
   const [uploadingVoice, setUploadingVoice] = useState(false);
   const voiceInputRef = useRef<HTMLInputElement | null>(null);
 
+  function authHeaders(): Record<string, string> {
+    const token = localStorage.getItem('memec_auth_token') || '';
+    return token ? { Authorization: `Bearer ${token}` } : {};
+  }
+
   function scrollToTts() {
     document.getElementById('tts-workshop')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   }
@@ -103,6 +108,7 @@ export default function Dashboard({ onNavigate }: DashboardProps) {
       form.append('audio', voiceFile);
       const resp = await fetch('/api/references/add', {
         method: 'POST',
+        headers: authHeaders(),
         body: form,
       });
       const body = await resp.text();

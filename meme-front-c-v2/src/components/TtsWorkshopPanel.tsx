@@ -40,6 +40,11 @@ export default function TtsWorkshopPanel({
   onReferenceIdChange,
   onPlayerUiChange,
 }: TtsWorkshopPanelProps) {
+  function authHeaders(): Record<string, string> {
+    const token = localStorage.getItem('memec_auth_token') || '';
+    return token ? { Authorization: `Bearer ${token}` } : {};
+  }
+
   const [text, setText] = useState(DEFAULT_TEXT);
   const [mode, setMode] = useState('normal');
   const [speed, setSpeed] = useState('0.85');
@@ -99,7 +104,7 @@ export default function TtsWorkshopPanel({
     try {
       const resp = await fetch('/api/tts/multi-segment-stream', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...authHeaders() },
         body: JSON.stringify({
           text: trimText,
           reference_id: referenceId.trim() || undefined,

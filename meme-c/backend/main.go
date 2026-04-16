@@ -972,6 +972,7 @@ func main() {
 	loadGenerationsFromDisk()
 
 	r := gin.Default()
+	authRequired := authRequiredMiddleware()
 
 	registerAdminRoutes(r)
 	db, err := sql.Open("postgres", cfg.DBDsn)
@@ -997,7 +998,7 @@ func main() {
 		})
 	})
 
-	r.POST("/api/tts", func(c *gin.Context) {
+	r.POST("/api/tts", authRequired, func(c *gin.Context) {
 		var req TTSRequest
 		if err := c.ShouldBindJSON(&req); err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request", "detail": err.Error()})
@@ -1116,7 +1117,7 @@ func main() {
 		c.Data(result.statusCode, outContentType, outBytes)
 	})
 
-	r.GET("/api/tts/stream", func(c *gin.Context) {
+	r.GET("/api/tts/stream", authRequired, func(c *gin.Context) {
 		text := strings.TrimSpace(c.Query("text"))
 		if text == "" {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "text is required"})
@@ -1181,7 +1182,7 @@ func main() {
 	// POST /api/tts/multi-segment-stream
 	// DeepSeek 返回断句 JSON 数组后，按段 index 轮流绑定 GPU 合成；响应为 NDJSON（每行一个 JSON），
 	// 首行 type=meta，随后 type=chunk 含 mp3_b64，便于前端边收边解码播放。
-	r.POST("/api/tts/multi-segment-stream", func(c *gin.Context) {
+	r.POST("/api/tts/multi-segment-stream", authRequired, func(c *gin.Context) {
 		var req multiSegmentStreamRequest
 		if err := c.ShouldBindJSON(&req); err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid json", "detail": err.Error()})
@@ -1521,7 +1522,7 @@ func main() {
 		_ = writeNDJSONLine(map[string]any{"type": "done"})
 	})
 
-	r.GET("/api/references/list", func(c *gin.Context) {
+	r.GET("/api/references/list", authRequired, func(c *gin.Context) {
 		union := make(map[string]struct{})
 		successCount := 0
 		var lastErr error
@@ -1572,7 +1573,7 @@ func main() {
 		c.JSON(http.StatusOK, gin.H{"reference_ids": allIDs})
 	})
 
-	r.POST("/api/references/add", func(c *gin.Context) {
+	r.POST("/api/references/add", authRequired, func(c *gin.Context) {
 		refID := c.PostForm("id")
 		refText := c.PostForm("text")
 		if refID == "" || refText == "" {

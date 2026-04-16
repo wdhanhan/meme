@@ -6,7 +6,6 @@ import (
 	"crypto/sha1"
 	"database/sql"
 	"encoding/base64"
-	"encoding/hex"
 	"fmt"
 	"io"
 	"net/http"
@@ -16,6 +15,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/golang-jwt/jwt/v5"
 )
 
 type sendSMSCodeRequest struct {
@@ -28,6 +28,11 @@ type loginBySMSRequest struct {
 }
 
 func registerAuthRoutes(r *gin.Engine, db *sql.DB) {
+	r.GET("/api/auth/me", authRequiredMiddleware(), func(c *gin.Context) {
+		claims, _ := c.Get("auth_claims")
+		c.JSON(http.StatusOK, gin.H{"ok": true, "claims": claims})
+	})
+
 	r.POST("/api/auth/sms/send", func(c *gin.Context) {
 		var req sendSMSCodeRequest
 		if err := c.ShouldBindJSON(&req); err != nil {
@@ -129,7 +134,11 @@ RETURNING id, created_at, updated_at;
 			return
 		}
 
-		token := issueDevToken(userID, phone)
+		token, err := issueJWTToken(userID, phone)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to issue jwt", "detail": err.Error()})
+			return
+		}
 		c.JSON(http.StatusOK, gin.H{
 			"ok":    true,
 			"token": token,
@@ -214,7 +223,11 @@ RETURNING id, created_at, updated_at;
 			return
 		}
 
-		token := issueDevToken(userID, phone)
+		token, err := issueJWTToken(userID, phone)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to issue jwt", "detail": err.Error()})
+			return
+		}
 		c.JSON(http.StatusOK, gin.H{
 			"ok":    true,
 			"token": token,
@@ -243,9 +256,25 @@ func genSMSCode() string {
 	return fmt.Sprintf("%06d", n%1000000)
 }
 
-func issueDevToken(userID int64, phone string) string {
-	raw := fmt.Sprintf("uid=%d|phone=%s|ts=%d", userID, phone, time.Now().Unix())
-	return hex.EncodeToString([]byte(raw))
+func issueJWTToken(userID int64, phone string) (string, error) {
+	secret := strings.TrimSpace(envOrDefault("MEMEC_JWT_SECRET", ""))
+	if secret == "" {
+		return "", fmt.Errorf("jwt secret not configured")
+	}
+	expHours := envIntOrDefault("MEMEC_JWT_EXPIRE_HOURS", 336)
+	if expHours <= 0 {
+		expHours = 336
+	}
+	now := time.Now()
+	claims := jwt.MapClaims{
+		"sub":   fmt.Sprintf("%d", userID),
+		"uid":   userID,
+		"phone": phone,
+		"iat":   now.Unix(),
+		"exp":   now.Add(time.Duration(expHours) * time.Hour).Unix(),
+	}
+	t := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	return t.SignedString([]byte(secret))
 }
 
 func sendSMSCodeViaAliyun(phone, code string) error {
