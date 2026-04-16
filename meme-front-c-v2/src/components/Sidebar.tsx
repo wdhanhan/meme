@@ -71,7 +71,7 @@ export default function Sidebar({ activeCategory, onCategoryChange, mobileOpen, 
         className={`
           fixed left-0 top-0 z-40 flex flex-col
           w-[min(17rem,82vw)] h-screen
-          bg-white/90 md:bg-white/40 backdrop-blur-2xl
+          bg-white/92 md:bg-white/85 backdrop-blur-sm
           shadow-2xl shadow-pink-100/50 rounded-r-[2.5rem]
           transition-transform duration-300 ease-in-out
           ${mobileOpen ? 'translate-x-0' : '-translate-x-full'}

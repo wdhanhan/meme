@@ -72,17 +72,22 @@
   .premium-card-shadow {
     box-shadow: 0 20px 40px -15px rgba(167, 41, 90, 0.12);
   }
+  /* backdrop-blur-sm (4px) instead of 2xl (40px) — drastically cheaper on CPU-only renderers */
   .glass-header {
-    @apply backdrop-blur-2xl bg-background/80;
+    @apply backdrop-blur-sm bg-background/92;
   }
   .glass-panel {
-    @apply backdrop-blur-2xl bg-white/70;
+    @apply backdrop-blur-sm bg-white/88;
   }
   .dream-gradient {
     @apply bg-linear-to-br from-primary to-primary-container;
   }
   .glass-card {
-    @apply bg-white/40 backdrop-blur-2xl border border-white/50;
+    @apply bg-white/75 backdrop-blur-sm border border-white/50;
+  }
+  /* Isolate panel repaints from sidebar / header */
+  .panel-contain {
+    contain: layout style;
   }
 }
 

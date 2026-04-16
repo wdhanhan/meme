@@ -1,4 +1,4 @@
-import React, { useRef, useState } from 'react';
+import React, { useRef, useState, useTransition } from 'react';
 import { motion } from 'motion/react';
 import {
   Star, CloudRain, Settings, CheckCircle2, Mic2, Headphones,
@@ -243,9 +243,9 @@ function VoiceAuditionPanel({ voices, onPlayerChange }: VoiceAuditionPanelProps)
         </div>
         <div className="flex flex-wrap gap-4">
           {voices.map((v) => (
-            <motion.div key={v.id} layout>
+            <div key={v.id}>
               <VoiceCard voice={v} selected={selected?.id === v.id} onClick={() => setSelected(v)} />
-            </motion.div>
+            </div>
           ))}
         </div>
         {selected && (
@@ -696,6 +696,7 @@ interface DashboardProps {
 export default function Dashboard({ onNavigate: _onNavigate }: DashboardProps) {
   const [activeCategory, setActiveCategory] = useState('stories');
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [isPending, startTransition] = useTransition();
   const [voices, setVoices] = useState<Voice[]>([...VOICES]);
   const [selectedVoiceId, setSelectedVoiceId] = useState<string>(VOICES[0]?.referenceId ?? '');
   const [ttsPlayer, setTtsPlayer] = useState<TtsPlayerBarState | null>(null);
@@ -709,7 +710,7 @@ export default function Dashboard({ onNavigate: _onNavigate }: DashboardProps) {
           <StoryPanel
             title="童话故事" icon={BookOpen} color="bg-primary"
             description="经典童话与创意故事，用最爱的声音讲给孩子听"
-            onGoAudition={() => setActiveCategory('voice-audition')}
+            onGoAudition={() => startTransition(() => setActiveCategory('voice-audition'))}
             voices={voices} selectedVoiceId={selectedVoiceId} onVoiceSelect={setSelectedVoiceId}
           />
         );
@@ -718,7 +719,7 @@ export default function Dashboard({ onNavigate: _onNavigate }: DashboardProps) {
           <StoryPanel
             title="战争与历史" icon={Castle} color="bg-secondary"
             description="波澜壮阔的历史故事，感受时代风云变幻"
-            onGoAudition={() => setActiveCategory('voice-audition')}
+            onGoAudition={() => startTransition(() => setActiveCategory('voice-audition'))}
             voices={voices} selectedVoiceId={selectedVoiceId} onVoiceSelect={setSelectedVoiceId}
           />
         );
@@ -727,7 +728,7 @@ export default function Dashboard({ onNavigate: _onNavigate }: DashboardProps) {
           <StoryPanel
             title="学科知识" icon={GraduationCap} color="bg-teal-500"
             description="趣味学科故事，让知识在睡前悄悄扎根"
-            onGoAudition={() => setActiveCategory('voice-audition')}
+            onGoAudition={() => startTransition(() => setActiveCategory('voice-audition'))}
             voices={voices} selectedVoiceId={selectedVoiceId} onVoiceSelect={setSelectedVoiceId}
           />
         );
@@ -785,24 +786,29 @@ export default function Dashboard({ onNavigate: _onNavigate }: DashboardProps) {
 
       <Sidebar
         activeCategory={activeCategory}
-        onCategoryChange={setActiveCategory}
+        onCategoryChange={(cat) => startTransition(() => setActiveCategory(cat))}
         mobileOpen={sidebarOpen}
         onMobileClose={() => setSidebarOpen(false)}
       />
 
       <main className="ml-0 md:ml-72 pt-28 pb-44 px-6 md:px-10 relative min-h-screen">
-        {/* Background blobs */}
-        <div className="fixed inset-0 pointer-events-none -z-10">
-          <div className="absolute top-[-10%] right-[-5%] w-[600px] h-[600px] bg-primary/5 rounded-full blur-[120px]" />
-          <div className="absolute bottom-[10%] left-[20%] w-[400px] h-[400px] bg-secondary/5 rounded-full blur-[100px]" />
-        </div>
+        {/* Background gradient — zero filter cost, no GPU needed */}
+        <div
+          className="fixed inset-0 pointer-events-none -z-10"
+          style={{
+            background:
+              'radial-gradient(ellipse 55% 55% at 95% 0%, rgba(167,41,90,0.07) 0%, transparent 70%), ' +
+              'radial-gradient(ellipse 45% 45% at 20% 95%, rgba(120,82,70,0.05) 0%, transparent 70%)',
+          }}
+        />
 
         <div className="max-w-5xl mx-auto">
           <motion.div
             key={activeCategory}
             initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            transition={{ duration: 0.15, ease: 'easeOut' }}
+            animate={{ opacity: isPending ? 0.6 : 1 }}
+            transition={{ duration: 0.12, ease: 'easeOut' }}
+            className="panel-contain"
           >
             {renderPanel()}
           </motion.div>
