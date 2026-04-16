@@ -29,34 +29,34 @@ export default function LandingPage({ onNavigate }: LandingPageProps) {
         </div>
       </header>
 
-      <main className="pt-24 pb-32 px-6 max-w-7xl mx-auto">
-        <section className="text-center mb-16 space-y-4">
-          <motion.h2 
+      <main className="pt-24 pb-24 px-4 md:px-6 max-w-7xl mx-auto">
+        <section className="text-center mb-12 md:mb-16 space-y-4 px-2">
+          <motion.h2
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
-            className="text-4xl md:text-5xl font-extrabold font-headline text-primary tracking-tight leading-tight"
+            className="text-3xl md:text-5xl font-extrabold font-headline text-primary tracking-tight leading-tight"
           >
-            Upgrade to Premium Sanctuary
+            升级到梦境守护套餐
           </motion.h2>
-          <motion.p 
+          <motion.p
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: 0.1 }}
-            className="text-secondary text-lg max-w-2xl mx-auto font-body opacity-80"
+            className="text-secondary text-base md:text-lg max-w-2xl mx-auto font-body opacity-80"
           >
             为您和孩子开启一段被温柔包裹的梦境旅程。克隆您的声音，编织专属的安眠曲。
           </motion.p>
         </section>
 
-        <section className="mb-20">
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+        <section className="mb-16">
+          <div className="grid grid-cols-2 md:grid-cols-2 lg:grid-cols-4 gap-4 md:gap-6">
             {features.map((feature, i) => (
               <motion.div
                 key={i}
                 initial={{ opacity: 0, y: 20 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ delay: 0.2 + i * 0.1 }}
-                className="bg-surface-container-lowest p-8 rounded-xl premium-card-shadow flex flex-col items-center text-center gap-4"
+                className="bg-surface-container-lowest p-5 md:p-8 rounded-xl premium-card-shadow flex flex-col items-center text-center gap-3 md:gap-4"
               >
                 <div className="w-14 h-14 bg-primary-container/20 rounded-full flex items-center justify-center text-primary">
                   <feature.icon className="w-8 h-8" />
@@ -68,13 +68,13 @@ export default function LandingPage({ onNavigate }: LandingPageProps) {
           </div>
         </section>
 
-        <section className="grid grid-cols-1 md:grid-cols-3 gap-8 items-end">
+        <section className="grid grid-cols-1 md:grid-cols-3 gap-5 md:gap-8 items-end">
           {PRICING_PLANS.map((plan, i) => (
             <PricingCard key={plan.id} plan={plan} onJoin={() => onNavigate('login')} />
           ))}
         </section>
 
-        <section className="mt-20 p-6 md:p-10 bg-surface-container-lowest rounded-xl premium-card-shadow flex flex-col md:flex-row items-center gap-10">
+        <section className="mt-12 md:mt-20 p-5 md:p-10 bg-surface-container-lowest rounded-xl premium-card-shadow flex flex-col md:flex-row items-center gap-6 md:gap-10">
           <div className="w-full md:w-1/2">
             <img
               src="https://lh3.googleusercontent.com/aida-public/AB6AXuBAhEpfIxgLzuwu-NnunSjFjfcBbK9slh7JGvuhqydnpHC9tEbb1pwPAIJKmN1yUD_6G3lF-OYn7GLjgSrwOjJgmwexvlp1us-FtuNQ-XLm7AOOs4M-xLIblPYJBdDGcy0KD1xyvtIRkbybEO5GIbT8jegCYw2ozhIubcJ5Rj5WTkLR0j3HIvhgSiqQdVSf5xJrqBbPYWQ8Uj4Wyj2yV1nRFOl4J4czs97zoMOP-YQIBTAT2MOmhSw8W3zz7mBBjcOE-JBkJObcwBY"
@@ -103,8 +103,8 @@ export default function LandingPage({ onNavigate }: LandingPageProps) {
         </section>
       </main>
 
-      <footer className="bg-surface-container-low mt-12 py-12 px-6">
-        <div className="max-w-7xl mx-auto flex flex-col md:flex-row justify-between items-center gap-8">
+      <footer className="bg-surface-container-low mt-8 py-8 md:py-12 px-4 md:px-6">
+        <div className="max-w-7xl mx-auto flex flex-col md:flex-row justify-between items-center gap-5 md:gap-8 text-center md:text-left">
           <div className="flex items-center gap-2 opacity-60">
             <Sparkles className="w-6 h-6 text-primary" />
             <span className="font-headline font-bold text-primary">梦幻粉色庇护所</span>

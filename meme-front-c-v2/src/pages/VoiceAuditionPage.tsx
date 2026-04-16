@@ -3,7 +3,7 @@ import {
   ArrowLeft, Home, LogIn, Headphones, Upload,
   CheckCircle2, AlertCircle, Loader2, Mic2, ChevronDown, ChevronUp,
 } from 'lucide-react';
-import { motion, AnimatePresence } from 'motion/react';
+import { motion } from 'motion/react';
 import VoiceCard from '../components/VoiceCard';
 import TtsWorkshopPanel from '../components/TtsWorkshopPanel';
 import PlayerBar from '../components/PlayerBar';
@@ -155,20 +155,20 @@ export default function VoiceAuditionPage({ onNavigate, initialVoiceId }: VoiceA
             <span className="text-2xl font-bold text-primary drop-shadow-sm font-headline">试音工坊</span>
           </div>
         </div>
-        <div className="flex items-center gap-4 md:gap-6">
+        <div className="flex items-center gap-3">
           <button
             onClick={() => onNavigate('landing')}
-            className="flex items-center gap-1 text-primary hover:opacity-80 hover:scale-105 transition-all text-sm font-bold"
+            className="hidden sm:flex items-center gap-1 text-primary hover:opacity-80 transition-all text-sm font-bold"
           >
             <Home className="w-5 h-5" />
-            <span className="hidden sm:inline">首页</span>
+            <span>首页</span>
           </button>
           <button
             onClick={() => onNavigate('login')}
-            className="flex items-center gap-1 text-primary hover:opacity-80 hover:scale-105 transition-all text-sm font-bold"
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-primary text-white text-xs font-semibold hover:opacity-90 transition-opacity"
           >
-            <LogIn className="w-5 h-5" />
-            <span className="hidden sm:inline">登录</span>
+            <LogIn className="w-3.5 h-3.5" />
+            登录
           </button>
         </div>
       </header>
@@ -179,7 +179,7 @@ export default function VoiceAuditionPage({ onNavigate, initialVoiceId }: VoiceA
         <div className="absolute bottom-[10%] left-[10%] w-[350px] h-[350px] bg-secondary/5 rounded-full blur-[100px]" />
       </div>
 
-      <main className="pt-28 pb-48 px-6 md:px-12">
+      <main className="pt-24 pb-32 px-4 md:px-12">
         <div className="max-w-4xl mx-auto space-y-8">
 
           {/* ── 选择音色 ─────────────────────────────── */}
@@ -188,7 +188,7 @@ export default function VoiceAuditionPage({ onNavigate, initialVoiceId }: VoiceA
               <h3 className="text-xl font-bold font-headline text-primary tracking-tight">选择试音音色</h3>
               <p className="text-xs text-secondary/60 hidden sm:block italic">点击卡片切换朗读声音</p>
             </div>
-            <div className="flex flex-wrap gap-4">
+            <div className="flex flex-wrap gap-3">
               {voices.map((voice) => (
                 <motion.div key={voice.id} layout>
                   <VoiceCard
@@ -237,16 +237,10 @@ export default function VoiceAuditionPage({ onNavigate, initialVoiceId }: VoiceA
                 : <ChevronDown className="w-5 h-5 text-primary/60" />}
             </button>
 
-            <AnimatePresence initial={false}>
-              {uploadOpen && (
-                <motion.div
-                  key="upload-form"
-                  initial={{ height: 0, opacity: 0 }}
-                  animate={{ height: 'auto', opacity: 1 }}
-                  exit={{ height: 0, opacity: 0 }}
-                  transition={{ duration: 0.25, ease: 'easeInOut' }}
-                  className="overflow-hidden"
-                >
+            <div
+              className="overflow-hidden transition-all duration-200"
+              style={{ maxHeight: uploadOpen ? '800px' : '0px', opacity: uploadOpen ? 1 : 0 }}
+            >
                   <div className="px-6 md:px-8 pb-7 pt-1 space-y-5 border-t border-white/40">
 
                     {/* 上传区 */}
@@ -333,9 +327,7 @@ export default function VoiceAuditionPage({ onNavigate, initialVoiceId }: VoiceA
                       <span>{uploadStatus}</span>
                     </div>
                   </div>
-                </motion.div>
-              )}
-            </AnimatePresence>
+            </div>
           </section>
 
         </div>

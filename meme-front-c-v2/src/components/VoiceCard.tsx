@@ -13,7 +13,7 @@ export default function VoiceCard({ voice, onClick, selected }: VoiceCardProps) 
     <motion.div
       whileHover={{ y: -4, scale: 1.02 }}
       onClick={onClick}
-      className={`flex-shrink-0 w-44 glass-card p-5 rounded-xl flex flex-col items-center space-y-3 transition-all cursor-pointer ${
+      className={`flex-shrink-0 w-36 sm:w-44 glass-card p-4 sm:p-5 rounded-xl flex flex-col items-center space-y-2 sm:space-y-3 transition-all cursor-pointer ${
         selected
           ? 'border-2 border-primary shadow-xl shadow-pink-200 bg-primary/5'
           : 'hover:shadow-xl hover:shadow-pink-100'
@@ -25,10 +25,10 @@ export default function VoiceCard({ voice, onClick, selected }: VoiceCardProps) 
             src={voice.avatarUrl}
             alt={voice.name}
             referrerPolicy="no-referrer"
-            className="w-20 h-20 rounded-full object-cover border-4 border-white shadow-sm"
+            className="w-16 h-16 sm:w-20 sm:h-20 rounded-full object-cover border-4 border-white shadow-sm"
           />
         ) : (
-          <div className="w-20 h-20 rounded-full border-4 border-white shadow-sm bg-primary/15 flex items-center justify-center text-primary text-2xl font-bold">
+          <div className="w-16 h-16 sm:w-20 sm:h-20 rounded-full border-4 border-white shadow-sm bg-primary/15 flex items-center justify-center text-primary text-xl sm:text-2xl font-bold">
             {voice.name.slice(0, 1)}
           </div>
         )}

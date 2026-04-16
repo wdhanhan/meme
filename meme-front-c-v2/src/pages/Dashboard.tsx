@@ -1,13 +1,12 @@
 import React, { useRef, useState } from 'react';
-import { motion, AnimatePresence } from 'motion/react';
+import { motion } from 'motion/react';
 import {
-  Star, CloudRain, Settings, Home, LogIn, CheckCircle2, Mic2, Headphones,
+  Star, CloudRain, Settings, CheckCircle2, Mic2, Headphones,
   Bot, Upload, AlertCircle, Loader2, ChevronDown, ChevronUp, PlusCircle,
   Music2, Droplets, Wind, Waves, Moon, Flame, Play, Crown, Shield,
   HelpCircle, MessageCircle, Mail, ChevronRight, Bell, User, BookOpen,
-  Castle, GraduationCap,
+  Castle, GraduationCap, Menu, Sparkles,
 } from 'lucide-react';
-import { Sparkles } from 'lucide-react';
 import Sidebar from '../components/Sidebar';
 import VoiceCard from '../components/VoiceCard';
 import StoryCard from '../components/StoryCard';
@@ -70,7 +69,7 @@ function RadioPanel() {
       {/* 环境音卡片 */}
       <div>
         <h3 className="text-lg font-bold font-headline text-primary mb-4">环境音库</h3>
-        <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
+        <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 md:gap-4">
           {ambients.map((a) => {
             const isPlaying = playing === a.id;
             return (
@@ -458,30 +457,44 @@ function PricingPanel() {
       </div>
 
       {/* 价格卡片 */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-6 items-start">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-5 items-start">
         {PRICING_PLANS.map((plan) => (
           <PricingCard key={plan.id} plan={plan} onJoin={() => {}} />
         ))}
       </div>
 
-      {/* 权益对比简表 */}
+      {/* 权益对比简表（横向滚动适配移动端） */}
       <div className="glass-card rounded-2xl border border-white/60 overflow-hidden">
-        <div className="px-6 py-4 border-b border-white/40">
+        <div className="px-5 py-4 border-b border-white/40">
           <h3 className="font-bold text-primary text-sm">权益一览</h3>
         </div>
-        {[
-          ['声音复刻次数', '每月 1 次', '每月 3 次', '无限次'],
-          ['故事库', '50 篇', '全部', '全部'],
-          ['AI 智能推荐', '✕', '✓', '✓'],
-          ['多设备同步', '✕', '✕', '✓'],
-        ].map(([feat, ...vals]) => (
-          <div key={feat} className="grid grid-cols-4 px-6 py-3 border-b border-white/20 last:border-0 hover:bg-white/20 transition-colors">
-            <span className="text-sm text-secondary/80">{feat}</span>
-            {vals.map((v, i) => (
-              <span key={i} className={`text-sm text-center ${v === '✕' ? 'text-secondary/40' : 'text-primary font-semibold'}`}>{v}</span>
-            ))}
-          </div>
-        ))}
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[360px] text-sm">
+            <thead>
+              <tr className="border-b border-white/20">
+                <th className="text-left px-5 py-2.5 text-secondary/60 font-normal">功能</th>
+                {['月度版', '年度版', '终身版'].map((h) => (
+                  <th key={h} className="px-3 py-2.5 text-center text-xs font-bold text-primary/70">{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {[
+                ['声音复刻次数', '每月 1 次', '每月 3 次', '无限次'],
+                ['故事库', '50 篇', '全部', '全部'],
+                ['AI 智能推荐', '✕', '✓', '✓'],
+                ['多设备同步', '✕', '✕', '✓'],
+              ].map(([feat, ...vals]) => (
+                <tr key={feat} className="border-b border-white/10 last:border-0 hover:bg-white/20 transition-colors">
+                  <td className="px-5 py-3 text-secondary/80">{feat}</td>
+                  {vals.map((v, i) => (
+                    <td key={i} className={`px-3 py-3 text-center ${v === '✕' ? 'text-secondary/30' : 'text-primary font-semibold'}`}>{v}</td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       </div>
     </div>
   );
@@ -510,7 +523,7 @@ function SettingsPanel() {
       {/* 个人信息 */}
       <section className="glass-card rounded-2xl border border-white/60 p-6 space-y-5">
         <h3 className="font-bold text-sm text-primary uppercase tracking-wider">个人信息</h3>
-        <div className="flex items-center gap-5">
+        <div className="flex flex-col sm:flex-row items-start sm:items-center gap-5">
           <div className="relative">
             <div className="w-20 h-20 rounded-full overflow-hidden border-4 border-white shadow-md">
               <img src="https://lh3.googleusercontent.com/aida-public/AB6AXuBa-HcTtqncJhNe7PmFxDpOKIdgAJmHe_gN6iHsR3mbyyRiCnY5afaoV5aRzhCDqU1OOF_-TwqXUdwS6Hd0IoQT2YTyq9c1Fxl8U9ci5sYhLtFVB2bxVD-KtMamA_0DYGeV7qKA9Wcx79wdc7zKB87UATRqGryHcFK_LltW4KNCaQ_Y_IVeMzOqjGLa59CviVtNvJ5FRzyn6WX_qWAhPjg4bXGgc1rnmVQ7aayvgLn8OjlICLx_HlqERSgaRo__iiY75ypXjDBGHFc"
@@ -637,19 +650,12 @@ function HelpPanel() {
                 <span className="text-sm font-semibold text-on-surface">{faq.q}</span>
                 {open === i ? <ChevronUp className="w-4 h-4 text-primary/60 shrink-0" /> : <ChevronDown className="w-4 h-4 text-secondary/40 shrink-0" />}
               </button>
-              <AnimatePresence initial={false}>
-                {open === i && (
-                  <motion.div
-                    initial={{ height: 0, opacity: 0 }}
-                    animate={{ height: 'auto', opacity: 1 }}
-                    exit={{ height: 0, opacity: 0 }}
-                    transition={{ duration: 0.2 }}
-                    className="overflow-hidden"
-                  >
-                    <p className="px-5 pb-4 text-sm text-secondary/80 leading-relaxed border-t border-white/40 pt-3">{faq.a}</p>
-                  </motion.div>
-                )}
-              </AnimatePresence>
+              <div
+                className="overflow-hidden transition-all duration-200"
+                style={{ maxHeight: open === i ? '200px' : '0px', opacity: open === i ? 1 : 0 }}
+              >
+                <p className="px-5 pb-4 text-sm text-secondary/80 leading-relaxed border-t border-white/40 pt-3">{faq.a}</p>
+              </div>
             </div>
           ))}
         </div>
@@ -689,6 +695,7 @@ interface DashboardProps {
 
 export default function Dashboard({ onNavigate: _onNavigate }: DashboardProps) {
   const [activeCategory, setActiveCategory] = useState('stories');
+  const [sidebarOpen, setSidebarOpen] = useState(false);
   const [voices, setVoices] = useState<Voice[]>([...VOICES]);
   const [selectedVoiceId, setSelectedVoiceId] = useState<string>(VOICES[0]?.referenceId ?? '');
   const [ttsPlayer, setTtsPlayer] = useState<TtsPlayerBarState | null>(null);
@@ -743,7 +750,17 @@ export default function Dashboard({ onNavigate: _onNavigate }: DashboardProps) {
     <div className="bg-background font-body text-on-background min-h-screen overflow-x-hidden">
       {/* Header */}
       <header className="fixed top-0 w-full z-50 flex justify-between items-center px-4 md:px-10 h-20 bg-background/80 backdrop-blur-xl shadow-[0_4px_30px_rgba(167,41,90,0.05)]">
-        <span className="text-2xl font-bold text-primary drop-shadow-sm font-headline">梦幻粉色庇护所</span>
+        <div className="flex items-center gap-2">
+          {/* 汉堡菜单：仅移动端可见 */}
+          <button
+            onClick={() => setSidebarOpen(true)}
+            className="md:hidden w-9 h-9 flex items-center justify-center rounded-full hover:bg-primary/10 transition-colors text-primary"
+            aria-label="打开菜单"
+          >
+            <Menu className="w-5 h-5" />
+          </button>
+          <span className="text-xl md:text-2xl font-bold text-primary drop-shadow-sm font-headline">梦幻粉色庇护所</span>
+        </div>
         <div className="flex items-center gap-3 md:gap-5">
           <div className="h-6 w-px bg-primary/20 hidden sm:block" />
           <button className="text-primary hover:opacity-80 hover:scale-105 transition-all">
@@ -766,7 +783,12 @@ export default function Dashboard({ onNavigate: _onNavigate }: DashboardProps) {
         </div>
       </header>
 
-      <Sidebar activeCategory={activeCategory} onCategoryChange={setActiveCategory} />
+      <Sidebar
+        activeCategory={activeCategory}
+        onCategoryChange={setActiveCategory}
+        mobileOpen={sidebarOpen}
+        onMobileClose={() => setSidebarOpen(false)}
+      />
 
       <main className="ml-0 md:ml-72 pt-28 pb-44 px-6 md:px-10 relative min-h-screen">
         {/* Background blobs */}
@@ -776,17 +798,14 @@ export default function Dashboard({ onNavigate: _onNavigate }: DashboardProps) {
         </div>
 
         <div className="max-w-5xl mx-auto">
-          <AnimatePresence mode="wait">
-            <motion.div
-              key={activeCategory}
-              initial={{ opacity: 0, y: 10 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -6 }}
-              transition={{ duration: 0.2 }}
-            >
-              {renderPanel()}
-            </motion.div>
-          </AnimatePresence>
+          <motion.div
+            key={activeCategory}
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            transition={{ duration: 0.15, ease: 'easeOut' }}
+          >
+            {renderPanel()}
+          </motion.div>
         </div>
       </main>
 
