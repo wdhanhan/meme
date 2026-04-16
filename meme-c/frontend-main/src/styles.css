@@ -32,6 +32,18 @@ body {
   font-size: 13px;
 }
 
+.page header .header-muted {
+  color: #666;
+  font-size: 13px;
+}
+
+.section-title {
+  margin: 0 0 14px;
+  font-size: 16px;
+  font-weight: 600;
+  color: #111827;
+}
+
 .page header a {
   color: #2563eb;
   text-decoration: none;

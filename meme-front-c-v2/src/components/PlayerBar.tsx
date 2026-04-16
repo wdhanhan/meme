@@ -11,8 +11,21 @@ import {
   VolumeX, 
   Volume2 
 } from 'lucide-react';
+import type { TtsPlayerBarState } from '../types';
 
-export default function PlayerBar() {
+interface PlayerBarProps {
+  /** 有值且 active 时展示 TTS 合成/播放状态，否则为演示内容 */
+  tts?: TtsPlayerBarState | null;
+}
+
+export default function PlayerBar({ tts = null }: PlayerBarProps) {
+  const demoTitle = '森林里的小兔与月亮';
+  const demoSubtitle = '妈妈的声音';
+  const title = tts?.active ? tts.title : demoTitle;
+  const subtitle = tts?.active ? tts.subtitle : demoSubtitle;
+  const progressPct = tts?.active ? Math.min(100, Math.max(0, tts.progressPct)) : 33;
+  const showBusy = tts?.active && tts.isBusy;
+
   return (
     <footer className="fixed bottom-0 left-0 right-0 z-50 px-4 md:px-10 pb-6 md:pb-10">
       <div className="max-w-7xl mx-auto glass-card rounded-xl p-4 md:p-6 shadow-[0_-10px_40px_rgba(167,41,90,0.1)] flex flex-wrap items-center gap-4 md:gap-8">
@@ -26,11 +39,16 @@ export default function PlayerBar() {
               className="w-full h-full object-cover"
             />
           </div>
-          <div>
-            <h5 className="font-bold text-on-surface truncate max-w-[150px]">森林里的小兔与月亮</h5>
-            <p className="text-xs text-primary font-medium flex items-center gap-1">
-              <Mic2 className="w-3 h-3 fill-primary" />
-              妈妈的声音
+          <div className="min-w-0">
+            <h5 className="font-bold text-on-surface truncate max-w-[180px] md:max-w-[240px]" title={title}>
+              {title}
+            </h5>
+            <p
+              className="text-xs text-primary font-medium flex items-center gap-1 truncate max-w-[200px] md:max-w-[280px]"
+              title={subtitle}
+            >
+              <Mic2 className="w-3 h-3 fill-primary shrink-0" />
+              <span className="truncate">{subtitle}</span>
             </p>
           </div>
         </div>
@@ -45,10 +63,19 @@ export default function PlayerBar() {
               <SkipBack className="w-6 h-6 fill-current" />
             </button>
             <motion.button
+              type="button"
               whileTap={{ scale: 0.9 }}
               className="w-12 h-12 md:w-14 md:h-14 rounded-full bg-primary text-white flex items-center justify-center shadow-lg shadow-primary/30 hover:scale-105 transition-all"
             >
-              <Pause className="w-6 h-6 md:w-8 md:h-8 fill-current" />
+              {tts?.active ? (
+                showBusy ? (
+                  <Pause className="w-6 h-6 md:w-8 md:h-8 fill-current" />
+                ) : (
+                  <Play className="w-6 h-6 md:w-8 md:h-8 fill-current pl-0.5" />
+                )
+              ) : (
+                <Pause className="w-6 h-6 md:w-8 md:h-8 fill-current" />
+              )}
             </motion.button>
             <button className="text-secondary hover:text-primary transition-colors">
               <SkipForward className="w-6 h-6 fill-current" />
@@ -60,7 +87,10 @@ export default function PlayerBar() {
           <div className="w-full max-w-md flex items-center gap-3">
             <span className="text-[10px] text-secondary/60">12:45</span>
             <div className="flex-1 h-1 bg-primary/10 rounded-full relative overflow-hidden">
-              <div className="absolute left-0 top-0 bottom-0 w-1/3 bg-primary rounded-full" />
+              <div
+                className="absolute left-0 top-0 bottom-0 bg-primary rounded-full transition-[width] duration-300"
+                style={{ width: `${progressPct}%` }}
+              />
             </div>
             <span className="text-[10px] text-secondary/60">34:20</span>
           </div>

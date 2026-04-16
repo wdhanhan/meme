@@ -6,12 +6,14 @@ export const VOICES: Voice[] = [
     name: '妈妈的声音',
     avatarUrl: 'https://lh3.googleusercontent.com/aida-public/AB6AXuAe9YPZfeNjnpHYsZf4wvV1FPOfBkIwaisw9CZv8TCYU3h_HumYq7Ab7gmRLp1SVZ3OaAeVz8CXgS_ZaX0eQPAmpREWkuc4nbwB31I8NM2uewnz4xfT3ohBv2j0rbdcYSIiYM8l-diweqJD4GjPzslTv_kxwJ_g-QSetSjJ7Cmu4kA7aMAoaeCJzTVCkCJMyaRQzs6b0WrxMTLHo-_NqaVWTlO1t0VEOn6ZMa_mvJDrScsY3-8wOP7AsNv9CbDDDdp_f6Eb1oTIxOA',
     status: 'ready',
+    referenceId: 'mom_voice_001',
   },
   {
     id: '2',
     name: '爸爸的声音',
     avatarUrl: 'https://lh3.googleusercontent.com/aida-public/AB6AXuCy4igoxanNR2EgkcgUzAmR8VscrkFkypPooHMddNXvszdzuceb8xBOko8fGfifCaBGpxeRb1PMvMg1Uhk-PAvHSs0Eg8KAyDEdtgJeQbSOpDh0ZojubAWcCJqOWFj-7M6RbHQzGKy0nI1imsaKYwUF0NC6qBwaGM0S4UKmLRif8ZM-57yF78Vi2R82qtBNLdiipnrEomtXZoA8dZN0qNowvKItflqLkzBFLyMbSse16S8MKSszFnuXkH2x2Hxe2uG-XPIpcExs53U',
     status: 'ready',
+    referenceId: 'dad_voice_001',
   },
 ];
 

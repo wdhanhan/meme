@@ -58,7 +58,7 @@ async function playMultiSegmentStream(response, session, onStatus) {
       }
       if (obj.type === 'meta') {
         onStatus(
-          `断句 ${obj.count} 段，正在合成…（上游：${(obj.upstream_plan || []).join(' → ')}）`,
+          `断句 ${obj.count} 段，正在合成…（计划上游：${(obj.upstream_plan || []).join(' → ')}）`,
           'loading',
           { current: 0, total: obj.count }
         )
@@ -139,7 +139,9 @@ function App() {
       await playMultiSegmentStream(resp, session, setMsg)
       if (!session.cancelled) setMsg('多段流式播放结束。', 'ok')
     } catch (e) {
-      if (!session.cancelled) setMsg('失败:\n' + (e.message || String(e)), 'err')
+      if (!session.cancelled) {
+        setMsg('多段流式失败:\n' + (e.message || String(e)), 'err')
+      }
     } finally {
       setBusy(false)
     }
@@ -154,7 +156,7 @@ function App() {
     <main className="page">
       <header>
         <h1>Meme C 声音复刻服务</h1>
-        <p>
+        <p className="header-muted">
           公网访问地址：<b>http://147.139.141.118/</b>
           {' · '}
           <a href="/admin/">管理后台</a>
@@ -162,6 +164,7 @@ function App() {
       </header>
 
       <div className="card">
+        <h2 className="section-title">文本转复刻语音</h2>
         <div className="row">
           <label>文本</label>
           <textarea
@@ -178,7 +181,7 @@ function App() {
             type="text"
             value={refId}
             onChange={(e) => setRefId(e.target.value)}
-            placeholder="例如 my_voice_001（留空使用默认音色）"
+            placeholder="例如 my_voice_001"
           />
         </div>
 
@@ -207,7 +210,7 @@ function App() {
             {busy ? '合成中…' : '多卡断句流式（DeepSeek 分句 + GPU 轮流）'}
           </button>
           <p className="hint">
-            先由 DeepSeek 返回断句数组，再按句轮流分配到各 Fish GPU；严格串行播放，不会同时出声。
+            先由 DeepSeek 返回断句数组，再按句轮流分配到各 Fish GPU；本页按句严格串行播放。
           </p>
         </div>
       </div>
