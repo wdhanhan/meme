@@ -13,6 +13,8 @@ interface TtsWorkshopPanelProps {
   referenceId: string;
   onReferenceIdChange: (value: string) => void;
   onPlayerUiChange?: (state: TtsPlayerBarState | null) => void;
+  /** 隐藏「参考音色 ID」输入框（在试音页已由音色卡片控制） */
+  hideReferenceInput?: boolean;
 }
 
 const DEFAULT_TEXT = '你好，这是 Meme C 的前端测试。';
@@ -39,6 +41,7 @@ export default function TtsWorkshopPanel({
   referenceId,
   onReferenceIdChange,
   onPlayerUiChange,
+  hideReferenceInput = false,
 }: TtsWorkshopPanelProps) {
   function authHeaders(): Record<string, string> {
     const token = localStorage.getItem('memec_auth_token') || '';
@@ -177,17 +180,19 @@ export default function TtsWorkshopPanel({
           />
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div>
-            <label className="block text-xs font-bold text-secondary mb-1.5 ml-1">参考音色 ID</label>
-            <input
-              type="text"
-              value={referenceId}
-              onChange={(e) => onReferenceIdChange(e.target.value)}
-              placeholder="例如 my_voice_001"
-              className="w-full px-4 py-3 rounded-full bg-white/70 border border-white/60 text-on-surface placeholder:text-outline/50 focus:ring-2 focus:ring-primary-container outline-hidden"
-            />
-          </div>
+        <div className={`grid gap-4 ${hideReferenceInput ? 'grid-cols-1' : 'grid-cols-1 md:grid-cols-2'}`}>
+          {!hideReferenceInput && (
+            <div>
+              <label className="block text-xs font-bold text-secondary mb-1.5 ml-1">参考音色 ID</label>
+              <input
+                type="text"
+                value={referenceId}
+                onChange={(e) => onReferenceIdChange(e.target.value)}
+                placeholder="例如 my_voice_001"
+                className="w-full px-4 py-3 rounded-full bg-white/70 border border-white/60 text-on-surface placeholder:text-outline/50 focus:ring-2 focus:ring-primary-container outline-hidden"
+              />
+            </div>
+          )}
           <div>
             <label className="block text-xs font-bold text-secondary mb-1.5 ml-1">生成模式</label>
             <select

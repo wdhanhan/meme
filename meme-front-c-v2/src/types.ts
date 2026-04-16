@@ -1,4 +1,4 @@
-export type Page = 'landing' | 'login' | 'dashboard' | 'voice-clone';
+export type Page = 'landing' | 'login' | 'dashboard' | 'voice-clone' | 'voice-audition';
 
 /** 底部播放条在 TTS 合成/播放时的覆盖状态 */
 export interface TtsPlayerBarState {

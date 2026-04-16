@@ -5,24 +5,38 @@ interface VoiceCardProps {
   key?: string | number;
   voice: Voice;
   onClick?: () => void;
+  selected?: boolean;
 }
 
-export default function VoiceCard({ voice, onClick }: VoiceCardProps) {
+export default function VoiceCard({ voice, onClick, selected }: VoiceCardProps) {
   return (
     <motion.div
       whileHover={{ y: -4, scale: 1.02 }}
       onClick={onClick}
-      className="flex-shrink-0 w-48 glass-card p-6 rounded-xl flex flex-col items-center space-y-3 hover:shadow-xl hover:shadow-pink-100 transition-all cursor-pointer"
+      className={`flex-shrink-0 w-44 glass-card p-5 rounded-xl flex flex-col items-center space-y-3 transition-all cursor-pointer ${
+        selected
+          ? 'border-2 border-primary shadow-xl shadow-pink-200 bg-primary/5'
+          : 'hover:shadow-xl hover:shadow-pink-100'
+      }`}
     >
       <div className="relative">
-        <img
-          src={voice.avatarUrl}
-          alt={voice.name}
-          referrerPolicy="no-referrer"
-          className="w-20 h-20 rounded-full object-cover border-4 border-white shadow-sm"
-        />
+        {voice.avatarUrl ? (
+          <img
+            src={voice.avatarUrl}
+            alt={voice.name}
+            referrerPolicy="no-referrer"
+            className="w-20 h-20 rounded-full object-cover border-4 border-white shadow-sm"
+          />
+        ) : (
+          <div className="w-20 h-20 rounded-full border-4 border-white shadow-sm bg-primary/15 flex items-center justify-center text-primary text-2xl font-bold">
+            {voice.name.slice(0, 1)}
+          </div>
+        )}
         {voice.status === 'ready' && (
           <div className="absolute bottom-0 right-0 w-6 h-6 bg-green-400 border-2 border-white rounded-full" />
+        )}
+        {voice.status === 'processing' && (
+          <div className="absolute bottom-0 right-0 w-6 h-6 bg-yellow-400 border-2 border-white rounded-full animate-pulse" />
         )}
       </div>
       <span className="font-semibold text-on-surface">{voice.name}</span>

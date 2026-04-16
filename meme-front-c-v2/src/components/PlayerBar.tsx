@@ -16,9 +16,11 @@ import type { TtsPlayerBarState } from '../types';
 interface PlayerBarProps {
   /** 有值且 active 时展示 TTS 合成/播放状态，否则为演示内容 */
   tts?: TtsPlayerBarState | null;
+  /** 追加到 footer 上的定位类，如 "md:left-72" 用于侧边栏布局 */
+  footerClassName?: string;
 }
 
-export default function PlayerBar({ tts = null }: PlayerBarProps) {
+export default function PlayerBar({ tts = null, footerClassName = '' }: PlayerBarProps) {
   const demoTitle = '森林里的小兔与月亮';
   const demoSubtitle = '妈妈的声音';
   const title = tts?.active ? tts.title : demoTitle;
@@ -27,7 +29,7 @@ export default function PlayerBar({ tts = null }: PlayerBarProps) {
   const showBusy = tts?.active && tts.isBusy;
 
   return (
-    <footer className="fixed bottom-0 left-0 right-0 z-50 px-4 md:px-10 pb-6 md:pb-10">
+    <footer className={`fixed bottom-0 left-0 right-0 z-50 px-4 md:px-6 pb-4 md:pb-6 ${footerClassName}`}>
       <div className="max-w-7xl mx-auto glass-card rounded-xl p-4 md:p-6 shadow-[0_-10px_40px_rgba(167,41,90,0.1)] flex flex-wrap items-center gap-4 md:gap-8">
         {/* Story Info */}
         <div className="flex items-center gap-4 min-w-[200px] md:min-w-[240px]">

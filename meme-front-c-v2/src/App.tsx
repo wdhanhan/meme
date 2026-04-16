@@ -9,6 +9,7 @@ import LandingPage from './pages/LandingPage';
 import LoginPage from './pages/LoginPage';
 import Dashboard from './pages/Dashboard';
 import VoiceClonePage from './pages/VoiceClonePage';
+import VoiceAuditionPage from './pages/VoiceAuditionPage';
 
 export default function App() {
   const [currentPage, setCurrentPage] = useState<Page>('dashboard');
@@ -31,6 +32,9 @@ export default function App() {
       )}
       {currentPage === 'voice-clone' && (
         <VoiceClonePage onNavigate={handleNavigate} />
+      )}
+      {currentPage === 'voice-audition' && (
+        <VoiceAuditionPage onNavigate={handleNavigate} />
       )}
     </div>
   );
