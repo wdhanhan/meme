@@ -1,0 +1,23 @@
+services:
+  memec-postgres:
+    image: postgres:16-alpine
+    container_name: memec-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: memec
+      POSTGRES_USER: memec
+      POSTGRES_PASSWORD: memec
+      TZ: Asia/Shanghai
+    ports:
+      - "5432:5432"
+    volumes:
+      - memec_pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U memec -d memec"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+volumes:
+  memec_pg_data:
+

@@ -16,6 +16,7 @@ NGINX_SITE="/etc/nginx/sites-available/meme-c.conf"
 NGINX_SITE_ENABLED="/etc/nginx/sites-enabled/meme-c.conf"
 FISH_BASE_PORT="${FISH_BASE_PORT:-8080}"
 GPU_COUNT="${FISH_GPU_COUNT:-}"
+POSTGRES_DSN="${MEMEC_POSTGRES_DSN:-postgres://memec:memec@127.0.0.1:5432/memec?sslmode=disable}"
 
 if [[ -z "${GPU_COUNT}" ]]; then
   if command -v nvidia-smi >/dev/null 2>&1; then
@@ -86,6 +87,7 @@ WorkingDirectory=${BACKEND_DIR}
 Environment=MEMEC_BACKEND_LISTEN=127.0.0.1:8090
 Environment=MEMEC_DATA_DIR=${ROOT_DIR}/data
 Environment=FISH_API_BASES=${FISH_API_BASES}
+Environment=MEMEC_POSTGRES_DSN=${POSTGRES_DSN}
 Environment=TTS_QUEUE_SIZE=64
 Environment=HTTP_TIMEOUT_SEC=300
 Environment=DEFAULT_MAX_NEW_TOKENS=1024

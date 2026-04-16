@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -27,6 +28,7 @@ type AppConfig struct {
 	TimeoutSec   int
 	MaxNewTokens int
 	QueueSize    int
+	DBDsn        string
 }
 
 type TTSRequest struct {
@@ -948,6 +950,10 @@ func main() {
 		TimeoutSec:   envIntOrDefault("HTTP_TIMEOUT_SEC", 300),
 		MaxNewTokens: envIntOrDefault("DEFAULT_MAX_NEW_TOKENS", 1024),
 		QueueSize:    envIntOrDefault("TTS_QUEUE_SIZE", 64),
+		DBDsn: envOrDefault(
+			"MEMEC_POSTGRES_DSN",
+			"postgres://memec:memec@127.0.0.1:5432/memec?sslmode=disable",
+		),
 	}
 	var fishAPIRR uint64
 
@@ -968,6 +974,14 @@ func main() {
 	r := gin.Default()
 
 	registerAdminRoutes(r)
+	db, err := sql.Open("postgres", cfg.DBDsn)
+	if err != nil {
+		panic(err)
+	}
+	if err := runMigrations(db); err != nil {
+		panic(err)
+	}
+	registerAuthRoutes(r, db)
 
 	r.GET("/api/health", func(c *gin.Context) {
 		totalQueueLen := 0
