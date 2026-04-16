@@ -77,9 +77,9 @@ export default function LandingPage({ onNavigate }: LandingPageProps) {
         <section className="mt-12 md:mt-20 p-5 md:p-10 bg-surface-container-lowest rounded-xl premium-card-shadow flex flex-col md:flex-row items-center gap-6 md:gap-10">
           <div className="w-full md:w-1/2">
             <img
-              src="https://lh3.googleusercontent.com/aida-public/AB6AXuBAhEpfIxgLzuwu-NnunSjFjfcBbK9slh7JGvuhqydnpHC9tEbb1pwPAIJKmN1yUD_6G3lF-OYn7GLjgSrwOjJgmwexvlp1us-FtuNQ-XLm7AOOs4M-xLIblPYJBdDGcy0KD1xyvtIRkbybEO5GIbT8jegCYw2ozhIubcJ5Rj5WTkLR0j3HIvhgSiqQdVSf5xJrqBbPYWQ8Uj4Wyj2yV1nRFOl4J4czs97zoMOP-YQIBTAT2MOmhSw8W3zz7mBBjcOE-JBkJObcwBY"
+              src="/assets/landing-safety.jpg"
               alt="Safe Child Sleeping"
-              referrerPolicy="no-referrer"
+             
               className="rounded-lg w-full h-64 object-cover"
             />
           </div>

@@ -293,7 +293,7 @@ export default function VoiceClonePage({ onNavigate }: VoiceClonePageProps) {
                   <img
                     src={voice.avatarUrl}
                     alt={voice.name}
-                    referrerPolicy="no-referrer"
+                   
                     className="w-8 h-8 rounded-full object-cover border border-white shadow-sm"
                   />
                   <div>

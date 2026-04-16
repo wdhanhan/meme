@@ -24,7 +24,7 @@ export default function VoiceCard({ voice, onClick, selected }: VoiceCardProps) 
           <img
             src={voice.avatarUrl}
             alt={voice.name}
-            referrerPolicy="no-referrer"
+           
             className="w-16 h-16 sm:w-20 sm:h-20 rounded-full object-cover border-4 border-white shadow-sm"
           />
         ) : (

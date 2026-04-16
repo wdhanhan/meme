@@ -28,8 +28,8 @@ export default function PlayerBar({ tts = null, footerClassName = '' }: PlayerBa
           {/* 封面 + 标题 */}
           <div className="w-10 h-10 rounded-lg overflow-hidden shadow-md shrink-0">
             <img
-              src="https://lh3.googleusercontent.com/aida-public/AB6AXuAaRGqxtbg24A64LWjmJXkuuC927zwb0vbK3oqnrUsOo7EGq_UH6nEvVljnsqXavD2B2K8AGfjRQi9tQJHd8ZfzS9wJ1JnQB49Lrz7ZprPcVuB58cId0yUS0pAwEjVvlBbBBHeUNIipIhrPFUAC6_GBU3ki6iwgw9-EjPpR9O862mpHvE7gLQcgmExr8jxjKOVtt8rHA8KycexPvoJFw8PmBI0rZTKalV7J9ziOf8OQHEOPM_9lxLdTb51sKsKjlOCEm5ODknnzCDQ"
-              alt="Playing" referrerPolicy="no-referrer" className="w-full h-full object-cover"
+              src="/assets/player-art.jpg"
+              alt="Playing" className="w-full h-full object-cover"
             />
           </div>
           <div className="flex-1 min-w-0">
@@ -62,8 +62,8 @@ export default function PlayerBar({ tts = null, footerClassName = '' }: PlayerBa
           <div className="flex items-center gap-4 min-w-[240px]">
             <div className="w-14 h-14 rounded-lg overflow-hidden shadow-md shrink-0">
               <img
-                src="https://lh3.googleusercontent.com/aida-public/AB6AXuAaRGqxtbg24A64LWjmJXkuuC927zwb0vbK3oqnrUsOo7EGq_UH6nEvVljnsqXavD2B2K8AGfjRQi9tQJHd8ZfzS9wJ1JnQB49Lrz7ZprPcVuB58cId0yUS0pAwEjVvlBbBBHeUNIipIhrPFUAC6_GBU3ki6iwgw9-EjPpR9O862mpHvE7gLQcgmExr8jxjKOVtt8rHA8KycexPvoJFw8PmBI0rZTKalV7J9ziOf8OQHEOPM_9lxLdTb51sKsKjlOCEm5ODknnzCDQ"
-                alt="Playing" referrerPolicy="no-referrer" className="w-full h-full object-cover"
+                src="/assets/player-art.jpg"
+                alt="Playing" className="w-full h-full object-cover"
               />
             </div>
             <div className="min-w-0">

@@ -87,9 +87,9 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
             >
               <div className="w-56 h-56 rounded-xl overflow-hidden shadow-2xl">
                 <img
-                  src="https://lh3.googleusercontent.com/aida-public/AB6AXuCW72h3G374CozEW98Pha_YJiQ61d-StJZvChoT6iZ-2B9tA7g-F18ja7dczANct1MgK7SXwD1I-c5wX_vATSRUOwIGhC7oM592yq9RKfy36n2p-HbxYGlXNZgdQHR8ljhRwA0KF4zzijtJNJkVe_kH6C59pI5l30KI5hlucpkB2J1wg2zWuYus2LIHgXkcRhF70E9Blzl6uwT71anX_iko3qQf3i3wVdx_5Iew_JnpvWKmNb9lX6rtH-6_5eTkNF3UmYHHjL6hquE"
+                  src="/assets/login-illustration.jpg"
                   alt="Dreamy Illustration"
-                  referrerPolicy="no-referrer"
+                 
                   className="w-full h-full object-cover"
                 />
               </div>

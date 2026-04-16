@@ -167,7 +167,7 @@ function StoryPanel({
                 }`}
               >
                 {v.avatarUrl ? (
-                  <img src={v.avatarUrl} alt={v.name} referrerPolicy="no-referrer" className="w-6 h-6 rounded-full object-cover" />
+                  <img src={v.avatarUrl} alt={v.name} className="w-6 h-6 rounded-full object-cover" />
                 ) : (
                   <div className="w-6 h-6 rounded-full bg-primary/15 flex items-center justify-center text-primary text-xs font-bold">{v.name[0]}</div>
                 )}
@@ -410,7 +410,7 @@ function VoiceClonePanel({ voices, onVoiceAdded }: VoiceClonePanelProps) {
           {voices.map((v) => (
             <div key={v.id} className="flex items-center gap-3 px-4 py-2.5 glass-card rounded-full border border-white/60">
               {v.avatarUrl ? (
-                <img src={v.avatarUrl} alt={v.name} referrerPolicy="no-referrer" className="w-8 h-8 rounded-full object-cover border border-white shadow-sm" />
+                <img src={v.avatarUrl} alt={v.name} className="w-8 h-8 rounded-full object-cover border border-white shadow-sm" />
               ) : (
                 <div className="w-8 h-8 rounded-full bg-primary/15 flex items-center justify-center text-primary text-sm font-bold">{v.name[0]}</div>
               )}
@@ -526,8 +526,8 @@ function SettingsPanel() {
         <div className="flex flex-col sm:flex-row items-start sm:items-center gap-5">
           <div className="relative">
             <div className="w-20 h-20 rounded-full overflow-hidden border-4 border-white shadow-md">
-              <img src="https://lh3.googleusercontent.com/aida-public/AB6AXuBa-HcTtqncJhNe7PmFxDpOKIdgAJmHe_gN6iHsR3mbyyRiCnY5afaoV5aRzhCDqU1OOF_-TwqXUdwS6Hd0IoQT2YTyq9c1Fxl8U9ci5sYhLtFVB2bxVD-KtMamA_0DYGeV7qKA9Wcx79wdc7zKB87UATRqGryHcFK_LltW4KNCaQ_Y_IVeMzOqjGLa59CviVtNvJ5FRzyn6WX_qWAhPjg4bXGgc1rnmVQ7aayvgLn8OjlICLx_HlqERSgaRo__iiY75ypXjDBGHFc"
-                alt="avatar" referrerPolicy="no-referrer" className="w-full h-full object-cover" />
+              <img src="/assets/user-avatar.jpg"
+                alt="avatar" className="w-full h-full object-cover" />
             </div>
             <button className="absolute -bottom-1 -right-1 w-6 h-6 rounded-full bg-primary text-white flex items-center justify-center shadow-md">
               <PlusCircle className="w-3.5 h-3.5" />
@@ -776,8 +776,8 @@ export default function Dashboard({ onNavigate: _onNavigate }: DashboardProps) {
           <button onClick={() => setActiveCategory('settings')}>
             <div className="w-9 h-9 rounded-full overflow-hidden border-2 border-primary-container">
               <img
-                src="https://lh3.googleusercontent.com/aida-public/AB6AXuBa-HcTtqncJhNe7PmFxDpOKIdgAJmHe_gN6iHsR3mbyyRiCnY5afaoV5aRzhCDqU1OOF_-TwqXUdwS6Hd0IoQT2YTyq9c1Fxl8U9ci5sYhLtFVB2bxVD-KtMamA_0DYGeV7qKA9Wcx79wdc7zKB87UATRqGryHcFK_LltW4KNCaQ_Y_IVeMzOqjGLa59CviVtNvJ5FRzyn6WX_qWAhPjg4bXGgc1rnmVQ7aayvgLn8OjlICLx_HlqERSgaRo__iiY75ypXjDBGHFc"
-                alt="User Avatar" referrerPolicy="no-referrer" className="w-full h-full object-cover"
+                src="/assets/user-avatar.jpg"
+                alt="User Avatar" className="w-full h-full object-cover"
               />
             </div>
           </button>
