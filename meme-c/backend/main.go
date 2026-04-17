@@ -722,7 +722,7 @@ func parseFishAPIs() []string {
 	return []string{envOrDefault("FISH_API_BASE", "http://127.0.0.1:8080")}
 }
 
-func startTTSWorkers(ctx context.Context, apis []string, client *http.Client, queues map[string]chan ttsJob) {
+func startTTSWorkers(ctx context.Context, apis []string, client *http.Client, queues map[string]chan ttsJob, refs *referenceIndex) {
 	for _, api := range apis {
 		fishAPI := api
 		queue := queues[fishAPI]
@@ -744,8 +744,23 @@ func startTTSWorkers(ctx context.Context, apis []string, client *http.Client, qu
 						}
 					}
 					// 本卡仍失败时，切换到其他 GPU 实例兜底重试。
+					// 若请求携带 reference_id，仅允许在同样持有该 reference 的实例重试，
+					// 避免“出声成功但音色跑偏”。
 					if err != nil || (err == nil && resp.StatusCode >= 500) {
-						for _, backupAPI := range apis {
+						allowedBackups := apis
+						var parsedReq TTSRequest
+						if uErr := json.Unmarshal(job.payload, &parsedReq); uErr == nil {
+							refID := strings.TrimSpace(parsedReq.ReferenceID)
+							if refID != "" && refs != nil {
+								if matched := refs.apisForReference(refID); len(matched) > 0 {
+									allowedBackups = matched
+								} else {
+									// 未知 reference 归属时，不跨卡兜底，保持失败可见，避免音色错配。
+									allowedBackups = []string{fishAPI}
+								}
+							}
+						}
+						for _, backupAPI := range allowedBackups {
 							if backupAPI == fishAPI {
 								continue
 							}
@@ -967,7 +982,7 @@ func main() {
 	}
 	workerCtx, workerCancel := context.WithCancel(context.Background())
 	defer workerCancel()
-	startTTSWorkers(workerCtx, cfg.FishAPIs, client, ttsQueues)
+	startTTSWorkers(workerCtx, cfg.FishAPIs, client, ttsQueues, refs)
 
 	// 启动时异步刷新 refs 索引，使重启后能正确路由带 reference_id 的请求
 	go func() {
@@ -1070,6 +1085,15 @@ func main() {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to encode request"})
 			return
 		}
+		if refID := strings.TrimSpace(req.ReferenceID); refID != "" {
+			if matched := refs.apisForReference(refID); len(matched) == 0 {
+				c.JSON(http.StatusBadRequest, gin.H{
+					"error":  "unknown reference_id",
+					"detail": "reference_id not synced to any fish upstream",
+				})
+				return
+			}
+		}
 
 		targetAPI := chooseAPIForTTS(req, cfg.FishAPIs, ttsQueues, refs, &fishAPIRR)
 		targetQueue, ok := ttsQueues[targetAPI]
@@ -1162,6 +1186,15 @@ func main() {
 			Mode:        mode,
 			Speed:       1.0,
 		}
+		if refID := strings.TrimSpace(req.ReferenceID); refID != "" {
+			if matched := refs.apisForReference(refID); len(matched) == 0 {
+				c.JSON(http.StatusBadRequest, gin.H{
+					"error":  "unknown reference_id",
+					"detail": "reference_id not synced to any fish upstream",
+				})
+				return
+			}
+		}
 		targetAPI := chooseAPIForTTS(req, cfg.FishAPIs, ttsQueues, refs, &fishAPIRR)
 		upstreamURL := fmt.Sprintf("%s/v1/tts", targetAPI)
 		payloadMap := map[string]any{
@@ -1234,6 +1267,15 @@ func main() {
 			Speed:        1.0,
 			MaxNewTokens: mtok,
 			Format:       "wav",
+		}
+		if refID := strings.TrimSpace(ttsBase.ReferenceID); refID != "" {
+			if matched := refs.apisForReference(refID); len(matched) == 0 {
+				c.JSON(http.StatusBadRequest, gin.H{
+					"error":  "unknown reference_id",
+					"detail": "reference_id not synced to any fish upstream",
+				})
+				return
+			}
 		}
 		reqCtx := c.Request.Context()
 		isSleep := strings.ToLower(strings.TrimSpace(req.Mode)) == "sleep"
@@ -1446,21 +1488,6 @@ func main() {
 				_ = writeNDJSONLine(map[string]any{"type": "error", "index": i, "message": "client disconnected"})
 				return
 			case res = <-ready[i]:
-			}
-			// 首段预热路径此前缺少 reference_id 失败降级：当上游 500 时自动去掉 reference_id 再试一次，
-			// 避免单段文本在首段直接失败，导致整条多段流式中断。
-			if i == 0 && res.statusCode >= 500 && strings.TrimSpace(ttsBase.ReferenceID) != "" {
-				segNoRef := ttsBase
-				segNoRef.Text = segments[0]
-				segNoRef.ReferenceID = ""
-				if payloadNoRef, mErr := json.Marshal(segNoRef); mErr == nil {
-					fbAPI := chooseAPIForTTS(segNoRef, cfg.FishAPIs, ttsQueues, refs, &fishAPIRR)
-					if fq, ok2 := ttsQueues[fbAPI]; ok2 {
-						if res2, e2 := submitTTSJob(reqCtx, fq, payloadNoRef, false); e2 == nil && res2.err == nil && res2.statusCode < 400 {
-							res = res2
-						}
-					}
-				}
 			}
 			// segment 0 的 TTS 耗时由预热 goroutine 记录
 			if i == 0 {

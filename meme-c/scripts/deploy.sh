@@ -61,22 +61,8 @@ if [[ -z "${FISH_API_BASES}" ]]; then
   fi
 fi
 
-# JWT：首次部署生成随机密钥写入 .runtime（不入库）；已存在则沿用，避免轮换导致全员掉线
-JWT_ENV_FILE="${ROOT_DIR}/.runtime/memec-jwt.env"
-mkdir -p "${ROOT_DIR}/.runtime"
-if [[ ! -f "${JWT_ENV_FILE}" ]]; then
-  umask 077
-  if command -v openssl >/dev/null 2>&1; then
-    echo "MEMEC_JWT_SECRET=$(openssl rand -hex 32)" > "${JWT_ENV_FILE}.new"
-  else
-    echo "MEMEC_JWT_SECRET=$(head -c 32 /dev/urandom | base64 | tr -d '+/=\n' | head -c 43)" > "${JWT_ENV_FILE}.new"
-  fi
-  mv -f "${JWT_ENV_FILE}.new" "${JWT_ENV_FILE}"
-  chmod 600 "${JWT_ENV_FILE}"
-  echo "[INFO] 已生成 JWT 密钥文件 ${JWT_ENV_FILE}"
-else
-  echo "[INFO] 沿用已有 JWT 密钥文件 ${JWT_ENV_FILE}"
-fi
+# JWT：按要求与后端服务同处部署脚本，直接写死在 systemd Environment 中
+MEMEC_JWT_SECRET="${MEMEC_JWT_SECRET:-memec-fixed-jwt-secret-2026}"
 
 # 阿里云短信：AK/SK 不入库；从本机 ninelevel/.env 等写入 .runtime，供 systemd EnvironmentFile 读取
 NINELEVEL_ROOT="${NINELEVEL_ROOT:-/root/ninelevel}"
@@ -170,10 +156,10 @@ Environment=MEMEC_BACKEND_LISTEN=127.0.0.1:8090
 Environment=MEMEC_DATA_DIR=${ROOT_DIR}/data
 Environment=FISH_API_BASES=${FISH_API_BASES}
 Environment=MEMEC_POSTGRES_DSN=${POSTGRES_DSN}
+Environment=MEMEC_JWT_SECRET=${MEMEC_JWT_SECRET}
 Environment=TTS_QUEUE_SIZE=64
 Environment=HTTP_TIMEOUT_SEC=300
 Environment=DEFAULT_MAX_NEW_TOKENS=1024
-EnvironmentFile=-${ROOT_DIR}/.runtime/memec-jwt.env
 EnvironmentFile=-${ROOT_DIR}/.runtime/aliyun-sms-from-ninelevel.env
 EnvironmentFile=-${ROOT_DIR}/.env.sms.local
 ExecStart=${BIN_PATH}
@@ -228,7 +214,7 @@ echo "[OK] Meme C deployed."
 echo "Frontend: http://127.0.0.1/"
 echo "Backend health: http://127.0.0.1/api/health"
 echo "Fish upstreams: ${FISH_API_BASES}"
-echo "JWT env file: ${JWT_ENV_FILE}"
+echo "JWT secret source: systemd Environment (deploy.sh)"
 echo "SMS runtime env: ${SMS_RUNTIME_ENV}"
 echo "Logs:"
 echo "  ${LOG_DIR}/backend.log"

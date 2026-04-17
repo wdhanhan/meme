@@ -67,6 +67,10 @@ func registerVoiceRoutes(r *gin.Engine, db *sql.DB, cfg AppConfig, refs *referen
 		if name == "" {
 			name = "我的声音"
 		}
+		referenceText := strings.TrimSpace(c.PostForm("reference_text"))
+		if referenceText == "" {
+			referenceText = "这是一段声音样本。" // fallback，质量较差
+		}
 
 		fileHeader, err := c.FormFile("audio")
 		if err != nil {
@@ -93,7 +97,7 @@ func registerVoiceRoutes(r *gin.Engine, db *sql.DB, cfg AppConfig, refs *referen
 		var form bytes.Buffer
 		w := multipart.NewWriter(&form)
 		_ = w.WriteField("id", refID)
-		_ = w.WriteField("text", "这是一段声音样本")
+		_ = w.WriteField("text", referenceText)
 		part, _ := w.CreateFormFile("audio", fileHeader.Filename)
 		_, _ = part.Write(audioBytes)
 		_ = w.Close()

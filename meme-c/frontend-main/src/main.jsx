@@ -84,7 +84,7 @@ function App() {
   const [text, setText] = useState('你好，这是 Meme C 的前端测试。')
   const [refId, setRefId] = useState('')
   const [mode, setMode] = useState('normal')
-  const [speed, setSpeed] = useState('0.85')
+  const [speed, setSpeed] = useState('0.95')
   const [status, setStatus] = useState({ msg: '等待操作', type: 'idle', progress: null })
   const [busy, setBusy] = useState(false)
   const sessionRef = useRef(null)
@@ -194,7 +194,7 @@ function App() {
         </div>
 
         <div className="row">
-          <label>语速（1.0 = 正常，0.85 = 慢一点）</label>
+          <label>语速（1.0 = 正常，0.95 = 默认）</label>
           <input
             type="number"
             step={0.05}

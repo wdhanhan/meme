@@ -59,12 +59,16 @@ func registerAuthRoutes(r *gin.Engine, db *sql.DB) {
 		}
 
 		code := genSMSCode()
-		if override := strings.TrimSpace(envOrDefault("MEMEC_SMS_DEV_FIXED_CODE", "")); override != "" {
-			code = override
+		overrideCode := strings.TrimSpace(envOrDefault("MEMEC_SMS_DEV_FIXED_CODE", ""))
+		if overrideCode != "" {
+			// 开发模式固定验证码：不依赖短信网关，直接写库用于登录验证。
+			code = overrideCode
 		}
-		if err := sendSMSCodeViaAliyun(phone, code); err != nil {
-			c.JSON(http.StatusBadGateway, gin.H{"error": "failed to send sms", "detail": err.Error()})
-			return
+		if overrideCode == "" {
+			if err := sendSMSCodeViaAliyun(phone, code); err != nil {
+				c.JSON(http.StatusBadGateway, gin.H{"error": "failed to send sms", "detail": err.Error()})
+				return
+			}
 		}
 		expiresAt := time.Now().Add(5 * time.Minute)
 		_, err := db.Exec(`
@@ -76,11 +80,15 @@ VALUES ($1, $2, $3, false);
 			return
 		}
 
-		c.JSON(http.StatusOK, gin.H{
+		resp := gin.H{
 			"ok":         true,
 			"phone":      phone,
 			"expires_at": expiresAt.Format(time.RFC3339),
-		})
+		}
+		if overrideCode != "" {
+			resp["dev_code"] = overrideCode
+		}
+		c.JSON(http.StatusOK, resp)
 	})
 
 	r.POST("/api/auth/sms/login", func(c *gin.Context) {
@@ -345,7 +353,12 @@ RETURNING id, created_at, updated_at;
 
 func normalizePhone(v string) string {
 	v = strings.TrimSpace(v)
-	v = strings.ReplaceAll(v, " ", "")
+	replacer := strings.NewReplacer(" ", "", "-", "", "(", "", ")", "", "+", "")
+	v = replacer.Replace(v)
+	// 统一手机号格式：兼容 +86/86 前缀，避免发码与登录号码不一致导致校验失败。
+	if len(v) == 13 && strings.HasPrefix(v, "86") {
+		v = v[2:]
+	}
 	return v
 }
 

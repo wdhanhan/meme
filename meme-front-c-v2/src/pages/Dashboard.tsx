@@ -8,7 +8,6 @@ import {
   Castle, GraduationCap, Menu, Sparkles, Eye, EyeOff,
 } from 'lucide-react';
 import Sidebar from '../components/Sidebar';
-import VoiceCard from '../components/VoiceCard';
 import StoryCard from '../components/StoryCard';
 import PlayerBar from '../components/PlayerBar';
 import PricingCard from '../components/PricingCard';
@@ -222,8 +221,16 @@ interface VoiceAuditionPanelProps {
 }
 
 function VoiceAuditionPanel({ voices, onPlayerChange }: VoiceAuditionPanelProps) {
-  const [selected, setSelected] = useState<Voice | null>(voices[0] ?? null);
-  const [ttsRefId, setTtsRefId] = useState(() => voices[0]?.referenceId ?? '');
+  const [selectedId, setSelectedId] = useState<string>('');
+
+  // voices 异步加载后，自动选第一个
+  useEffect(() => {
+    if (voices.length > 0 && !selectedId) {
+      setSelectedId(voices[0].referenceId ?? '');
+    }
+  }, [voices, selectedId]);
+
+  const selected = voices.find((v) => v.referenceId === selectedId) ?? voices[0] ?? null;
 
   return (
     <div className="space-y-8">
@@ -238,39 +245,46 @@ function VoiceAuditionPanel({ voices, onPlayerChange }: VoiceAuditionPanelProps)
       </div>
 
       {/* 音色选择 */}
-      <section className="glass-card rounded-2xl border border-white/60 p-6">
-        <div className="flex items-baseline justify-between mb-5">
-          <h3 className="text-base font-bold text-primary">选择试音音色</h3>
-          <p className="text-xs text-secondary/60 italic hidden sm:block">点击卡片切换</p>
-        </div>
-        <div className="flex flex-wrap gap-4">
-          {voices.map((v) => (
-            <div key={v.id}>
-              <VoiceCard
-                voice={v}
-                selected={selected?.id === v.id}
-                onClick={() => {
-                  setSelected(v);
-                  setTtsRefId(v.referenceId ?? '');
-                }}
-              />
-            </div>
-          ))}
-        </div>
-        {selected && (
-          <p className="mt-3 text-xs text-secondary/70">
-            当前：<span className="font-semibold text-primary ml-1">{selected.name}</span>
-            <span className="text-outline/60 ml-2">（{selected.referenceId ?? '—'}）</span>
+      <section className="glass-card rounded-2xl border border-white/60 p-5">
+        <h3 className="text-base font-bold text-primary mb-3">选择音色</h3>
+        {voices.length === 0 ? (
+          <p className="text-sm text-secondary/50 py-2">
+            还没有复刻的音色，请前往
+            <button className="text-primary font-semibold mx-1 hover:underline">声音复刻</button>
+            上传录音。
           </p>
+        ) : (
+          <div className="flex flex-wrap gap-2">
+            {voices.map((v) => {
+              const isSel = selected?.id === v.id;
+              return (
+                <button
+                  key={v.id}
+                  onClick={() => setSelectedId(v.referenceId ?? '')}
+                  className={`flex items-center gap-2 px-4 py-2.5 rounded-full border-2 text-sm transition-all ${
+                    isSel
+                      ? 'border-primary bg-primary/10 text-primary font-semibold shadow-sm'
+                      : 'border-white/60 bg-white/50 text-on-surface hover:border-primary/30'
+                  }`}
+                >
+                  <div className="w-6 h-6 rounded-full bg-primary/15 flex items-center justify-center text-primary text-xs font-bold">
+                    {v.name[0]}
+                  </div>
+                  {v.name}
+                  {isSel && <CheckCircle2 className="w-3.5 h-3.5" />}
+                </button>
+              );
+            })}
+          </div>
         )}
       </section>
 
       {/* TTS */}
       <TtsWorkshopPanel
-        referenceId={ttsRefId}
-        onReferenceIdChange={setTtsRefId}
+        referenceId={selected?.referenceId ?? ''}
+        onReferenceIdChange={() => {}}
+        hideReferenceInput
         onPlayerUiChange={onPlayerChange}
-        referenceIdLabel="音色 ID"
       />
     </div>
   );
@@ -289,6 +303,7 @@ function VoiceClonePanel({ voices, loadingVoices, onRefresh }: VoiceClonePanelPr
   const [file, setFile] = useState<File | null>(null);
   const [duration, setDuration] = useState<number | null>(null);
   const [name, setName] = useState('');
+  const [referenceText, setReferenceText] = useState('');
   const [status, setStatus] = useState('点击上传区域，选择 10-20 秒音频样本');
   const [kind, setKind] = useState<'idle' | 'loading' | 'ok' | 'err'>('idle');
   const [uploading, setUploading] = useState(false);
@@ -328,16 +343,18 @@ function VoiceClonePanel({ voices, loadingVoices, onRefresh }: VoiceClonePanelPr
 
   async function handleUpload() {
     if (!file) { setKind('err'); setStatus('请先选择音频文件'); return; }
+    if (!referenceText.trim()) { setKind('err'); setStatus('请填写录音内容，这对音色质量至关重要'); return; }
     setUploading(true); setKind('loading'); setStatus('上传中，请稍候…');
     try {
       const form = new FormData();
       if (name.trim()) form.append('name', name.trim());
+      form.append('reference_text', referenceText.trim());
       form.append('audio', file);
       const resp = await fetch('/api/voices', { method: 'POST', headers: authHeaders(), body: form });
       const data = await resp.json().catch(() => ({}));
       if (!resp.ok) throw new Error(data.error || data.detail || `HTTP ${resp.status}`);
       setKind('ok'); setStatus(`音色「${data.name}」创建成功，已同步到试音工坊！`);
-      setFile(null); setDuration(null); setName('');
+      setFile(null); setDuration(null); setName(''); setReferenceText('');
       onRefresh();
     } catch (e) {
       setKind('err'); setStatus(`上传失败：${e instanceof Error ? e.message : String(e)}`);
@@ -402,10 +419,27 @@ function VoiceClonePanel({ voices, loadingVoices, onRefresh }: VoiceClonePanelPr
         <input ref={inputRef} type="file" accept="audio/*" className="hidden"
           onChange={(e) => { void handlePick(e.target.files?.[0] || null); e.currentTarget.value = ''; }} />
 
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div>
+            <label className="block text-xs font-bold text-secondary mb-1.5 ml-1">声音名称（可选）</label>
+            <input type="text" value={name} onChange={(e) => setName(e.target.value)} placeholder="如 奶奶的声音"
+              className="w-full px-4 py-2.5 rounded-full bg-white/70 border border-white/60 text-sm text-on-surface placeholder:text-outline/50 focus:ring-2 focus:ring-primary-container outline-hidden" />
+          </div>
+          <div className="sm:col-span-1" />
+        </div>
+
         <div>
-          <label className="block text-xs font-bold text-secondary mb-1.5 ml-1">声音名称（可选）</label>
-          <input type="text" value={name} onChange={(e) => setName(e.target.value)} placeholder="如 奶奶的声音"
-            className="w-full px-4 py-2.5 rounded-full bg-white/70 border border-white/60 text-sm text-on-surface placeholder:text-outline/50 focus:ring-2 focus:ring-primary-container outline-hidden" />
+          <label className="block text-xs font-bold text-secondary mb-1.5 ml-1">
+            录音内容 <span className="text-red-400">*</span>
+            <span className="text-outline/60 font-normal ml-2">（请输入您在录音中说的话，影响克隆效果）</span>
+          </label>
+          <textarea
+            value={referenceText}
+            onChange={(e) => setReferenceText(e.target.value)}
+            placeholder="例如：宝贝，妈妈在这里陪着你，今天来讲一个美丽的故事……"
+            rows={3}
+            className="w-full px-4 py-3 rounded-xl bg-white/70 border border-white/60 text-sm text-on-surface placeholder:text-outline/50 focus:ring-2 focus:ring-primary-container outline-hidden resize-none"
+          />
         </div>
 
         <button type="button" onClick={() => void handleUpload()} disabled={uploading || !file}

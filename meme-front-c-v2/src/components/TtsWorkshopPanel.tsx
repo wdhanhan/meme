@@ -53,7 +53,7 @@ export default function TtsWorkshopPanel({
 
   const [text, setText] = useState(DEFAULT_TEXT);
   const [mode, setMode] = useState('normal');
-  const [speed, setSpeed] = useState('0.85');
+  const [speed, setSpeed] = useState('0.95');
   const [statusMsg, setStatusMsg] = useState('等待操作');
   const [statusKind, setStatusKind] = useState<'idle' | 'loading' | 'ok' | 'err'>('idle');
   const [progress, setProgress] = useState<{ current: number; total: number } | null>(null);
@@ -211,7 +211,7 @@ export default function TtsWorkshopPanel({
 
         <div>
           <label className="block text-xs font-bold text-secondary mb-1.5 ml-1">
-            语速（1.0 = 正常，0.85 = 慢一点）
+            语速（1.0 = 正常，0.95 = 默认）
           </label>
           <input
             type="number"

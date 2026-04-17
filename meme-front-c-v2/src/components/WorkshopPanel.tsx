@@ -205,7 +205,7 @@ export default function WorkshopPanel({ voices }: WorkshopPanelProps) {
   // Config
   const [referenceId, setReferenceId] = useState(voices[0]?.referenceId ?? '');
   const [mode, setMode] = useState('normal');
-  const [speed, setSpeed] = useState('0.85');
+  const [speed, setSpeed] = useState('0.95');
 
   // Jobs
   const [jobs, setJobs] = useState<WorkshopJob[]>([]);
