@@ -5,7 +5,7 @@ import {
   Bot, Upload, AlertCircle, Loader2, ChevronDown, ChevronUp, PlusCircle,
   Music2, Droplets, Wind, Waves, Moon, Flame, Play, Crown, Shield,
   HelpCircle, MessageCircle, Mail, ChevronRight, Bell, User, BookOpen,
-  Castle, GraduationCap, Menu, Sparkles,
+  Castle, GraduationCap, Menu, Sparkles, Eye, EyeOff,
 } from 'lucide-react';
 import Sidebar from '../components/Sidebar';
 import VoiceCard from '../components/VoiceCard';
@@ -519,6 +519,45 @@ function SettingsPanel({ onLogout }: SettingsPanelProps) {
   const [notify, setNotify] = useState(true);
   const [autoPlay, setAutoPlay] = useState(false);
   const [slowMode, setSlowMode] = useState(true);
+  const [showPwdForm, setShowPwdForm] = useState(false);
+  const [newPwd, setNewPwd] = useState('');
+  const [confirmPwd, setConfirmPwd] = useState('');
+  const [showNewPwd, setShowNewPwd] = useState(false);
+  const [pwdStatus, setPwdStatus] = useState('');
+  const [savingPwd, setSavingPwd] = useState(false);
+
+  async function handleSavePassword() {
+    if (!/^\d{6}$/.test(newPwd)) {
+      setPwdStatus('密码须为 6 位数字');
+      return;
+    }
+    if (newPwd !== confirmPwd) {
+      setPwdStatus('两次输入不一致');
+      return;
+    }
+    setSavingPwd(true);
+    setPwdStatus('保存中…');
+    try {
+      const token = localStorage.getItem('memec_auth_token') || '';
+      const resp = await fetch('/api/auth/password/set', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ password: newPwd }),
+      });
+      const data = await resp.json().catch(() => ({}));
+      if (!resp.ok) {
+        throw new Error([data.error, data.detail].filter(Boolean).join(' — ') || `HTTP ${resp.status}`);
+      }
+      setPwdStatus('密码已更新');
+      setNewPwd('');
+      setConfirmPwd('');
+      setTimeout(() => { setShowPwdForm(false); setPwdStatus(''); }, 1200);
+    } catch (e) {
+      setPwdStatus(`保存失败：${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setSavingPwd(false);
+    }
+  }
 
   return (
     <div className="space-y-8 max-w-2xl">
@@ -592,23 +631,77 @@ function SettingsPanel({ onLogout }: SettingsPanelProps) {
       {/* 安全 */}
       <section className="glass-card rounded-2xl border border-white/60 p-6 space-y-3">
         <h3 className="font-bold text-sm text-primary uppercase tracking-wider">安全与隐私</h3>
-        {[
-          { label: '修改密码', danger: false, onClick: () => {} },
-          { label: '退出登录', danger: false, onClick: onLogout },
-          { label: '注销账号', danger: true, onClick: () => {} },
-        ].map(({ label, danger, onClick }) => (
-          <button
-            key={label}
-            type="button"
-            onClick={onClick}
-            className={`w-full flex items-center justify-between px-4 py-3 rounded-xl hover:bg-white/60 transition-colors ${
-              danger ? 'text-red-500' : 'text-on-surface'
-            }`}
-          >
-            <span className="text-sm font-medium">{label}</span>
-            <ChevronRight className="w-4 h-4 text-secondary/40" />
-          </button>
-        ))}
+
+        {/* 修改密码 */}
+        <button
+          type="button"
+          onClick={() => { setShowPwdForm(!showPwdForm); setPwdStatus(''); }}
+          className="w-full flex items-center justify-between px-4 py-3 rounded-xl hover:bg-white/60 transition-colors text-on-surface"
+        >
+          <span className="text-sm font-medium">修改密码</span>
+          <ChevronRight className={`w-4 h-4 text-secondary/40 transition-transform ${showPwdForm ? 'rotate-90' : ''}`} />
+        </button>
+
+        {showPwdForm && (
+          <div className="px-4 pb-2 space-y-3">
+            <div className="space-y-2">
+              <label className="block text-xs font-bold text-secondary">新密码（6 位数字）</label>
+              <div className="relative">
+                <input
+                  type={showNewPwd ? 'text' : 'password'}
+                  placeholder="请输入 6 位数字"
+                  value={newPwd}
+                  onChange={(e) => setNewPwd(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                  inputMode="numeric"
+                  className="w-full px-4 pr-11 py-2.5 rounded-full bg-white/70 border border-white/60 text-sm text-on-surface focus:ring-2 focus:ring-primary-container outline-hidden"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowNewPwd(!showNewPwd)}
+                  className="absolute inset-y-0 right-4 flex items-center text-outline hover:text-primary transition-colors"
+                >
+                  {showNewPwd ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                </button>
+              </div>
+            </div>
+            <div className="space-y-2">
+              <label className="block text-xs font-bold text-secondary">确认新密码</label>
+              <input
+                type="password"
+                placeholder="再次输入新密码"
+                value={confirmPwd}
+                onChange={(e) => setConfirmPwd(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                inputMode="numeric"
+                className="w-full px-4 py-2.5 rounded-full bg-white/70 border border-white/60 text-sm text-on-surface focus:ring-2 focus:ring-primary-container outline-hidden"
+              />
+            </div>
+            {pwdStatus && <p className="text-xs text-secondary/70 px-1">{pwdStatus}</p>}
+            <button
+              type="button"
+              onClick={() => void handleSavePassword()}
+              disabled={savingPwd}
+              className="px-6 py-2 rounded-full dream-gradient text-white text-sm font-bold hover:opacity-90 transition-opacity disabled:opacity-60"
+            >
+              {savingPwd ? '保存中…' : '保存密码'}
+            </button>
+          </div>
+        )}
+
+        <button
+          type="button"
+          onClick={onLogout}
+          className="w-full flex items-center justify-between px-4 py-3 rounded-xl hover:bg-white/60 transition-colors text-on-surface"
+        >
+          <span className="text-sm font-medium">退出登录</span>
+          <ChevronRight className="w-4 h-4 text-secondary/40" />
+        </button>
+        <button
+          type="button"
+          className="w-full flex items-center justify-between px-4 py-3 rounded-xl hover:bg-white/60 transition-colors text-red-500"
+        >
+          <span className="text-sm font-medium">注销账号</span>
+          <ChevronRight className="w-4 h-4 text-secondary/40" />
+        </button>
       </section>
     </div>
   );

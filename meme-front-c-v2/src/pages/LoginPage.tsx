@@ -1,6 +1,6 @@
 import { FormEvent, useState } from 'react';
 import { motion } from 'motion/react';
-import { Smartphone, Lock, Eye, Sparkles, MessageCircle, User, Fingerprint } from 'lucide-react';
+import { Smartphone, Lock, Eye, EyeOff, Sparkles, MessageCircle, User, Fingerprint } from 'lucide-react';
 
 interface LoginPageProps {
   onLogin: () => void;
@@ -8,8 +8,11 @@ interface LoginPageProps {
 
 export default function LoginPage({ onLogin }: LoginPageProps) {
   const [authMode, setAuthMode] = useState<'login' | 'register'>('login');
+  const [loginMethod, setLoginMethod] = useState<'sms' | 'password'>('sms');
   const [phone, setPhone] = useState('');
   const [smsCode, setSmsCode] = useState('');
+  const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const [sendingCode, setSendingCode] = useState(false);
   const [loggingIn, setLoggingIn] = useState(false);
   const [status, setStatus] = useState('');
@@ -37,6 +40,41 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
       setStatus(`发送失败：${e instanceof Error ? e.message : String(e)}`);
     } finally {
       setSendingCode(false);
+    }
+  }
+
+  async function submitByPassword(e: FormEvent) {
+    e.preventDefault();
+    if (!phone.trim() || !password.trim()) {
+      setStatus('请输入手机号和密码');
+      return;
+    }
+    if (!/^\d{6}$/.test(password)) {
+      setStatus('密码为 6 位数字');
+      return;
+    }
+    setLoggingIn(true);
+    setStatus('登录中…');
+    try {
+      const resp = await fetch('/api/auth/password/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ phone: phone.trim(), password }),
+      });
+      const data = await resp.json().catch(() => ({}));
+      if (!resp.ok) {
+        const msg = [data.error, data.detail].filter(Boolean).join(' — ');
+        throw new Error(msg || `HTTP ${resp.status}`);
+      }
+      if (data.token) {
+        localStorage.setItem('memec_auth_token', data.token);
+      }
+      setStatus('登录成功');
+      onLogin();
+    } catch (e) {
+      setStatus(`登录失败：${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setLoggingIn(false);
     }
   }
 
@@ -154,9 +192,37 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
               </p>
             </div>
 
+            {/* 登录方式切换（仅登录模式） */}
+            {authMode === 'login' && (
+              <div className="flex p-1 bg-surface-container-high rounded-full self-start gap-0.5">
+                <button
+                  type="button"
+                  onClick={() => { setLoginMethod('sms'); setStatus(''); }}
+                  className={`px-5 py-1.5 rounded-full text-xs font-headline transition-colors ${
+                    loginMethod === 'sms'
+                      ? 'font-bold bg-white text-primary shadow-sm'
+                      : 'font-medium text-outline hover:text-primary'
+                  }`}
+                >
+                  短信验证码
+                </button>
+                <button
+                  type="button"
+                  onClick={() => { setLoginMethod('password'); setStatus(''); }}
+                  className={`px-5 py-1.5 rounded-full text-xs font-headline transition-colors ${
+                    loginMethod === 'password'
+                      ? 'font-bold bg-white text-primary shadow-sm'
+                      : 'font-medium text-outline hover:text-primary'
+                  }`}
+                >
+                  密码登录
+                </button>
+              </div>
+            )}
+
             <form
               className="space-y-4"
-              onSubmit={submitBySMS}
+              onSubmit={authMode === 'login' && loginMethod === 'password' ? submitByPassword : submitBySMS}
             >
               <div className="space-y-1.5">
                 <label className="block text-xs font-headline font-bold text-secondary ml-4">手机号码</label>
@@ -174,34 +240,62 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
                 </div>
               </div>
 
-              <div className="space-y-1.5">
-                <div className="flex justify-between items-center px-4">
-                  <label className="block text-xs font-headline font-bold text-secondary">短信验证码</label>
-                  <button
-                    type="button"
-                    onClick={() => void sendCode()}
-                    disabled={sendingCode}
-                    className="text-xs font-label font-bold text-primary hover:opacity-70 transition-opacity disabled:opacity-50"
-                  >
-                    {sendingCode ? '发送中…' : '发送验证码'}
-                  </button>
-                </div>
-                <div className="relative group">
-                  <div className="absolute inset-y-0 left-5 flex items-center pointer-events-none">
-                    <Lock className="w-5 h-5 text-outline group-focus-within:text-primary" />
+              {/* 密码字段（密码登录模式） */}
+              {authMode === 'login' && loginMethod === 'password' ? (
+                <div className="space-y-1.5">
+                  <label className="block text-xs font-headline font-bold text-secondary ml-4">登录密码</label>
+                  <div className="relative group">
+                    <div className="absolute inset-y-0 left-5 flex items-center pointer-events-none">
+                      <Lock className="w-5 h-5 text-outline group-focus-within:text-primary" />
+                    </div>
+                    <input
+                      type={showPassword ? 'text' : 'password'}
+                      placeholder="请输入 6 位数字密码"
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                      inputMode="numeric"
+                      className="w-full pl-14 pr-14 py-3.5 bg-surface-container-high border-none rounded-full text-on-surface placeholder:text-outline/60 focus:ring-2 focus:ring-primary-container focus:bg-white transition-all duration-300 font-body outline-hidden"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowPassword(!showPassword)}
+                      className="absolute inset-y-0 right-5 flex items-center text-outline hover:text-primary transition-colors"
+                    >
+                      {showPassword ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
+                    </button>
                   </div>
-                  <input
-                    type="text"
-                    placeholder="请输入短信验证码"
-                    value={smsCode}
-                    onChange={(e) => setSmsCode(e.target.value)}
-                    className="w-full pl-14 pr-14 py-3.5 bg-surface-container-high border-none rounded-full text-on-surface placeholder:text-outline/60 focus:ring-2 focus:ring-primary-container focus:bg-white transition-all duration-300 font-body outline-hidden"
-                  />
-                  <button type="button" className="absolute inset-y-0 right-5 flex items-center text-outline" disabled>
-                    <Eye className="w-5 h-5" />
-                  </button>
                 </div>
-              </div>
+              ) : (
+                /* 短信验证码字段 */
+                <div className="space-y-1.5">
+                  <div className="flex justify-between items-center px-4">
+                    <label className="block text-xs font-headline font-bold text-secondary">短信验证码</label>
+                    <button
+                      type="button"
+                      onClick={() => void sendCode()}
+                      disabled={sendingCode}
+                      className="text-xs font-label font-bold text-primary hover:opacity-70 transition-opacity disabled:opacity-50"
+                    >
+                      {sendingCode ? '发送中…' : '发送验证码'}
+                    </button>
+                  </div>
+                  <div className="relative group">
+                    <div className="absolute inset-y-0 left-5 flex items-center pointer-events-none">
+                      <Lock className="w-5 h-5 text-outline group-focus-within:text-primary" />
+                    </div>
+                    <input
+                      type="text"
+                      placeholder="请输入短信验证码"
+                      value={smsCode}
+                      onChange={(e) => setSmsCode(e.target.value)}
+                      className="w-full pl-14 pr-14 py-3.5 bg-surface-container-high border-none rounded-full text-on-surface placeholder:text-outline/60 focus:ring-2 focus:ring-primary-container focus:bg-white transition-all duration-300 font-body outline-hidden"
+                    />
+                    <button type="button" className="absolute inset-y-0 right-5 flex items-center text-outline" disabled>
+                      <Eye className="w-5 h-5" />
+                    </button>
+                  </div>
+                </div>
+              )}
 
               <div className="pt-4">
                 <button
@@ -210,7 +304,11 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
                   className="w-full dream-gradient text-white font-headline font-bold py-3.5 rounded-full shadow-[0_10px_30px_rgba(167,41,90,0.25)] hover:shadow-[0_15px_40px_rgba(167,41,90,0.35)] transition-all duration-300 flex items-center justify-center gap-2 active:scale-95 disabled:opacity-60"
                 >
                   <Sparkles className="w-5 h-5 fill-current" />
-                    {loggingIn ? (authMode === 'login' ? '登录中…' : '注册中…') : (authMode === 'login' ? '验证码登录' : '验证码注册')}
+                  {loggingIn
+                    ? (authMode === 'login' ? '登录中…' : '注册中…')
+                    : (authMode === 'login'
+                        ? (loginMethod === 'password' ? '密码登录' : '验证码登录')
+                        : '验证码注册')}
                 </button>
               </div>
               {status && <p className="text-xs text-secondary px-3">{status}</p>}

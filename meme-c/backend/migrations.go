@@ -26,6 +26,7 @@ CREATE TABLE IF NOT EXISTS user_sms_codes (
 );
 `,
 		`CREATE INDEX IF NOT EXISTS idx_user_sms_codes_phone_created_at ON user_sms_codes (phone, created_at DESC);`,
+		`ALTER TABLE users ADD COLUMN IF NOT EXISTS password_hash TEXT;`,
 	}
 
 	for _, stmt := range stmts {

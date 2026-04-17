@@ -10,12 +10,14 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
+	"golang.org/x/crypto/bcrypt"
 )
 
 type sendSMSCodeRequest struct {
@@ -26,6 +28,17 @@ type loginBySMSRequest struct {
 	Phone string `json:"phone"`
 	Code  string `json:"code"`
 }
+
+type loginByPasswordRequest struct {
+	Phone    string `json:"phone"`
+	Password string `json:"password"`
+}
+
+type setPasswordRequest struct {
+	Password string `json:"password"`
+}
+
+var sixDigitRe = regexp.MustCompile(`^\d{6}$`)
 
 func registerAuthRoutes(r *gin.Engine, db *sql.DB) {
 	r.GET("/api/auth/me", authRequiredMiddleware(), func(c *gin.Context) {
@@ -149,6 +162,95 @@ RETURNING id, created_at, updated_at;
 				"updated_at": updatedAt.Format(time.RFC3339),
 			},
 		})
+	})
+
+	// 密码登录
+	r.POST("/api/auth/password/login", func(c *gin.Context) {
+		var req loginByPasswordRequest
+		if err := c.ShouldBindJSON(&req); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request", "detail": err.Error()})
+			return
+		}
+		phone := normalizePhone(req.Phone)
+		pwd := strings.TrimSpace(req.Password)
+		if phone == "" || pwd == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "phone and password are required"})
+			return
+		}
+		if !sixDigitRe.MatchString(pwd) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "password must be 6 digits"})
+			return
+		}
+
+		var userID int64
+		var createdAt, updatedAt time.Time
+		var hashVal sql.NullString
+		err := db.QueryRow(`
+SELECT id, password_hash, created_at, updated_at
+FROM users WHERE phone = $1;
+`, phone).Scan(&userID, &hashVal, &createdAt, &updatedAt)
+		if err == sql.ErrNoRows {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "phone or password incorrect"})
+			return
+		}
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "db error", "detail": err.Error()})
+			return
+		}
+		if !hashVal.Valid || hashVal.String == "" {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "password not set, please use SMS login"})
+			return
+		}
+		if err := bcrypt.CompareHashAndPassword([]byte(hashVal.String), []byte(pwd)); err != nil {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "phone or password incorrect"})
+			return
+		}
+
+		token, err := issueJWTToken(userID, phone)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to issue jwt", "detail": err.Error()})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{
+			"ok":    true,
+			"token": token,
+			"user": gin.H{
+				"id":         userID,
+				"phone":      phone,
+				"created_at": createdAt.Format(time.RFC3339),
+				"updated_at": updatedAt.Format(time.RFC3339),
+			},
+		})
+	})
+
+	// 设置/修改密码（需登录）
+	r.POST("/api/auth/password/set", authRequiredMiddleware(), func(c *gin.Context) {
+		var req setPasswordRequest
+		if err := c.ShouldBindJSON(&req); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request", "detail": err.Error()})
+			return
+		}
+		pwd := strings.TrimSpace(req.Password)
+		if !sixDigitRe.MatchString(pwd) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "password must be 6 digits"})
+			return
+		}
+
+		claims, _ := c.Get("auth_claims")
+		claimsMap, _ := claims.(jwt.MapClaims)
+		uid, _ := claimsMap["uid"].(float64)
+		userID := int64(uid)
+
+		hash, err := bcrypt.GenerateFromPassword([]byte(pwd), bcrypt.DefaultCost)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to hash password"})
+			return
+		}
+		if _, err := db.Exec(`UPDATE users SET password_hash = $1, updated_at = NOW() WHERE id = $2;`, string(hash), userID); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to update password", "detail": err.Error()})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"ok": true})
 	})
 
 	r.POST("/api/auth/sms/register", func(c *gin.Context) {
