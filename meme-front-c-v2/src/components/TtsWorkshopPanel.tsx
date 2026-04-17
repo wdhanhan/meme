@@ -15,6 +15,8 @@ interface TtsWorkshopPanelProps {
   onPlayerUiChange?: (state: TtsPlayerBarState | null) => void;
   /** 隐藏「参考音色 ID」输入框（在试音页已由音色卡片控制） */
   hideReferenceInput?: boolean;
+  /** 音色 ID 输入框标题（默认：参考音色 ID） */
+  referenceIdLabel?: string;
 }
 
 const DEFAULT_TEXT = '你好，这是 Meme C 的前端测试。';
@@ -42,6 +44,7 @@ export default function TtsWorkshopPanel({
   onReferenceIdChange,
   onPlayerUiChange,
   hideReferenceInput = false,
+  referenceIdLabel = '参考音色 ID',
 }: TtsWorkshopPanelProps) {
   function authHeaders(): Record<string, string> {
     const token = localStorage.getItem('memec_auth_token') || '';
@@ -183,7 +186,7 @@ export default function TtsWorkshopPanel({
         <div className={`grid gap-4 ${hideReferenceInput ? 'grid-cols-1' : 'grid-cols-1 md:grid-cols-2'}`}>
           {!hideReferenceInput && (
             <div>
-              <label className="block text-xs font-bold text-secondary mb-1.5 ml-1">参考音色 ID</label>
+              <label className="block text-xs font-bold text-secondary mb-1.5 ml-1">{referenceIdLabel}</label>
               <input
                 type="text"
                 value={referenceId}

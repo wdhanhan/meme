@@ -15,6 +15,13 @@ FRONT_HOST="0.0.0.0"
 FRONT_INSTALL=1
 RESTART_FRONT=0
 ASSUME_MOVED=0
+FRONT_USE_NGINX=1
+FRONT_DIST_DIR="/var/www/meme-front-c-v2"
+FRONT_NGINX_SITE="meme-front-c-v2.conf"
+FRONT_SSL_CERT=""
+FRONT_SSL_KEY=""
+FRONT_DOMAIN="${MEME_FRONT_DOMAIN:-seer6000.vip}"
+PROJECT_CERT_DIR="${ROOT_DIR}/certs"
 
 usage() {
   cat <<'USAGE'
@@ -31,6 +38,12 @@ Options:
   --front-port <port>      Frontend port (default: 3001)
   --front-host <host>      Frontend host (default: 0.0.0.0)
   --no-front-install       Skip npm install for frontend
+  --front-dev              Use vite dev server instead of nginx deploy
+  --front-dist-dir <path>  Static deploy path for nginx (default: /var/www/meme-front-c-v2)
+  --front-ssl-cert <path>  SSL certificate file path (optional auto-detect)
+  --front-ssl-key <path>   SSL private key file path (optional auto-detect)
+  --front-domain <name>    Primary server_name for HTTPS (default: seer6000.vip, env: MEME_FRONT_DOMAIN)
+  Nginx 前端模式: 独占 80/443，其它 sites-enabled / conf.d 冲突项移至 .runtime/nginx-takeover-archive/
   --restart-front          Restart frontend dev server if running
   --assume-moved           Skip absolute-path warning for meme/meme-c
   -h, --help               Show this help
@@ -39,6 +52,8 @@ Examples:
   ./start
   ./start --only meme,meme-c
   ./start --only front --front-port 3100
+  ./start --only front
+  ./start --only front --front-dev --front-port 3100
   ./start --skip front
 USAGE
 }
@@ -59,16 +74,16 @@ parse_targets_only() {
   START_MEME=0
   START_MEME_C=0
   START_FRONT=0
-  contains_target "meme" "$csv" && START_MEME=1
-  contains_target "meme-c" "$csv" && START_MEME_C=1
-  contains_target "front" "$csv" && START_FRONT=1
+  if contains_target "meme" "$csv"; then START_MEME=1; fi
+  if contains_target "meme-c" "$csv"; then START_MEME_C=1; fi
+  if contains_target "front" "$csv"; then START_FRONT=1; fi
 }
 
 parse_targets_skip() {
   local csv="$1"
-  contains_target "meme" "$csv" && START_MEME=0
-  contains_target "meme-c" "$csv" && START_MEME_C=0
-  contains_target "front" "$csv" && START_FRONT=0
+  if contains_target "meme" "$csv"; then START_MEME=0; fi
+  if contains_target "meme-c" "$csv"; then START_MEME_C=0; fi
+  if contains_target "front" "$csv"; then START_FRONT=0; fi
 }
 
 while [[ $# -gt 0 ]]; do
@@ -96,6 +111,30 @@ while [[ $# -gt 0 ]]; do
     --no-front-install)
       FRONT_INSTALL=0
       shift
+      ;;
+    --front-dev)
+      FRONT_USE_NGINX=0
+      shift
+      ;;
+    --front-dist-dir)
+      [[ $# -lt 2 ]] && { echo "[ERROR] --front-dist-dir requires a value"; exit 1; }
+      FRONT_DIST_DIR="$2"
+      shift 2
+      ;;
+    --front-ssl-cert)
+      [[ $# -lt 2 ]] && { echo "[ERROR] --front-ssl-cert requires a value"; exit 1; }
+      FRONT_SSL_CERT="$2"
+      shift 2
+      ;;
+    --front-ssl-key)
+      [[ $# -lt 2 ]] && { echo "[ERROR] --front-ssl-key requires a value"; exit 1; }
+      FRONT_SSL_KEY="$2"
+      shift 2
+      ;;
+    --front-domain)
+      [[ $# -lt 2 ]] && { echo "[ERROR] --front-domain requires a value"; exit 1; }
+      FRONT_DOMAIN="$2"
+      shift 2
       ;;
     --restart-front)
       RESTART_FRONT=1
@@ -143,30 +182,156 @@ start_meme() {
 
 start_meme_c() {
   echo "[INFO] Starting meme-c ..."
-  bash "${ROOT_DIR}/meme-c/start"
+  if [[ -n "${MEMEC_FISH_REMOTE_HOST:-}" ]]; then
+    export FISH_REMOTE_HOST="${MEMEC_FISH_REMOTE_HOST}"
+    echo "[INFO] Fish TTS 将使用远程主机: ${FISH_REMOTE_HOST}（可用 FISH_GPU_COUNT 指定多卡端口）"
+  fi
+  MEMEC_SKIP_FRONTEND_DEPLOY=1 bash "${ROOT_DIR}/meme-c/start"
 }
 
 start_front() {
   local front_dir="${ROOT_DIR}/meme-front-c-v2"
   local front_log="${LOG_DIR}/meme-front-c-v2.log"
+  local nginx_site_path="/etc/nginx/sites-available/${FRONT_NGINX_SITE}"
+  local nginx_site_enabled="/etc/nginx/sites-enabled/${FRONT_NGINX_SITE}"
 
-  if [[ -f "$FRONT_PID_FILE" ]]; then
-    local old_pid
-    old_pid="$(cat "$FRONT_PID_FILE" 2>/dev/null || true)"
-    if [[ -n "$old_pid" ]] && kill -0 "$old_pid" 2>/dev/null; then
-      if [[ "$RESTART_FRONT" -eq 1 ]]; then
-        echo "[INFO] Stopping existing meme-front-c-v2 (pid=$old_pid) ..."
+  stop_front_dev_if_running() {
+    if [[ -f "$FRONT_PID_FILE" ]]; then
+      local old_pid
+      old_pid="$(cat "$FRONT_PID_FILE" 2>/dev/null || true)"
+      if [[ -n "$old_pid" ]] && kill -0 "$old_pid" 2>/dev/null; then
+        echo "[INFO] Stopping existing meme-front-c-v2 dev server (pid=$old_pid) ..."
         kill "$old_pid" || true
         sleep 1
-      else
-        echo "[INFO] meme-front-c-v2 already running (pid=$old_pid), skip."
-        echo "       Use --restart-front to restart it."
-        return 0
       fi
     fi
+  }
+
+  detect_ssl_files() {
+    local cert_dirs=("/root/ninilevel" "/root/ninelevel" "/root/sslnginx")
+    local d cert key
+
+    if [[ -n "$FRONT_SSL_CERT" && -n "$FRONT_SSL_KEY" ]]; then
+      return 0
+    fi
+
+    if [[ -f "${PROJECT_CERT_DIR}/${FRONT_DOMAIN}.crt" && -f "${PROJECT_CERT_DIR}/${FRONT_DOMAIN}.key" ]]; then
+      FRONT_SSL_CERT="${PROJECT_CERT_DIR}/${FRONT_DOMAIN}.crt"
+      FRONT_SSL_KEY="${PROJECT_CERT_DIR}/${FRONT_DOMAIN}.key"
+      return 0
+    fi
+
+    # 与历史 nginx 站点一致（若已存在则优先使用）
+    if [[ -f "/etc/nginx/ssl/${FRONT_DOMAIN}.crt" && -f "/etc/nginx/ssl/${FRONT_DOMAIN}.key" ]]; then
+      FRONT_SSL_CERT="/etc/nginx/ssl/${FRONT_DOMAIN}.crt"
+      FRONT_SSL_KEY="/etc/nginx/ssl/${FRONT_DOMAIN}.key"
+      return 0
+    fi
+
+    for d in "${cert_dirs[@]}"; do
+      [[ -d "$d" ]] || continue
+
+      if [[ -z "$FRONT_SSL_CERT" ]]; then
+        for cert in "$d"/*.crt "$d"/*.pem "$d"/*.cer; do
+          if [[ -f "$cert" ]]; then
+            FRONT_SSL_CERT="$cert"
+            break
+          fi
+        done
+      fi
+
+      if [[ -z "$FRONT_SSL_KEY" ]]; then
+        for key in "$d"/*.key "$d"/*.pem; do
+          if [[ -f "$key" ]]; then
+            FRONT_SSL_KEY="$key"
+            break
+          fi
+        done
+      fi
+
+      if [[ -n "$FRONT_SSL_CERT" && -n "$FRONT_SSL_KEY" ]]; then
+        return 0
+      fi
+    done
+
+    return 1
+  }
+
+  # 仅保留本站点的 sites-enabled 启用项，其余全部停用（避免其它 vhost 抢占 server_name / 端口）。
+  nginx_takeover_sites_enabled() {
+    local keep="${FRONT_NGINX_SITE}"
+    local endir="/etc/nginx/sites-enabled"
+    local arch="${ROOT_DIR}/.runtime/nginx-takeover-archive"
+    local ts f base dest
+
+    [[ -d "$endir" ]] || return 0
+    mkdir -p "$arch"
+    ts="$(date +%Y%m%d%H%M%S)"
+
+    shopt -s nullglob
+    for f in "${endir}"/*; do
+      base="$(basename "$f")"
+      if [[ "$base" == "$keep" ]]; then
+        continue
+      fi
+      dest="${arch}/${ts}_${base}"
+      echo "[INFO] Nginx 最高优先级: 停用冲突站点 sites-enabled/${base}"
+      if ! mv "$f" "$dest" 2>/dev/null; then
+        rm -f "$f"
+      fi
+    done
+    shopt -u nullglob
+  }
+
+  # conf.d 里若存在监听 80/443 的片段，会与站点抢占；移至归档目录。
+  nginx_takeover_conf_d_http() {
+    local arch="${ROOT_DIR}/.runtime/nginx-takeover-archive"
+    local d="/etc/nginx/conf.d"
+    local ts f dest
+    [[ -d "$d" ]] || return 0
+    mkdir -p "$arch"
+    ts="$(date +%Y%m%d%H%M%S)"
+    shopt -s nullglob
+    for f in "${d}"/*.conf; do
+      if grep -Eq '^\s*listen\s+[^;]*\b(80|443)\b' "$f" 2>/dev/null; then
+        dest="${arch}/${ts}_conf.d_$(basename "$f")"
+        echo "[INFO] Nginx 最高优先级: 停用冲突 conf.d/$(basename "$f")"
+        if ! mv "$f" "$dest" 2>/dev/null; then
+          rm -f "$f"
+        fi
+      fi
+    done
+    shopt -u nullglob
+  }
+
+  if [[ "$FRONT_USE_NGINX" -eq 0 ]]; then
+    if [[ -f "$FRONT_PID_FILE" ]]; then
+      local old_pid
+      old_pid="$(cat "$FRONT_PID_FILE" 2>/dev/null || true)"
+      if [[ -n "$old_pid" ]] && kill -0 "$old_pid" 2>/dev/null; then
+        if [[ "$RESTART_FRONT" -eq 1 ]]; then
+          echo "[INFO] Stopping existing meme-front-c-v2 (pid=$old_pid) ..."
+          kill "$old_pid" || true
+          sleep 1
+        else
+          echo "[INFO] meme-front-c-v2 already running (pid=$old_pid), skip."
+          echo "       Use --restart-front to restart it."
+          return 0
+        fi
+      fi
+    fi
+
+    echo "[INFO] Starting meme-front-c-v2 on ${FRONT_HOST}:${FRONT_PORT} ..."
+  else
+    if [[ "$(id -u)" -ne 0 ]]; then
+      echo "[ERROR] Nginx deploy needs root privileges."
+      echo "        Run as root or add --front-dev."
+      return 1
+    fi
+    echo "[INFO] Deploying meme-front-c-v2 to nginx (80/443) ..."
+    stop_front_dev_if_running
   fi
 
-  echo "[INFO] Starting meme-front-c-v2 on ${FRONT_HOST}:${FRONT_PORT} ..."
   if [[ "$FRONT_INSTALL" -eq 1 ]]; then
     (cd "$front_dir" && npm install)
   else
@@ -178,23 +343,125 @@ start_front() {
     fi
   fi
 
-  (
-    cd "$front_dir"
-    nohup npm run dev -- --port="$FRONT_PORT" --host="$FRONT_HOST" >>"$front_log" 2>&1 &
-    echo $! > "$FRONT_PID_FILE"
-  )
+  if [[ "$FRONT_USE_NGINX" -eq 1 ]]; then
+    local ssl_dir="/etc/nginx/ssl/meme-front-c-v2"
+    local ssl_cert_target="${ssl_dir}/server.crt"
+    local ssl_key_target="${ssl_dir}/server.key"
+    local project_cert_target="${PROJECT_CERT_DIR}/${FRONT_DOMAIN}.crt"
+    local project_key_target="${PROJECT_CERT_DIR}/${FRONT_DOMAIN}.key"
 
-  sleep 1
-  local new_pid
-  new_pid="$(cat "$FRONT_PID_FILE" 2>/dev/null || true)"
-  if [[ -n "$new_pid" ]] && kill -0 "$new_pid" 2>/dev/null; then
-    echo "[OK] meme-front-c-v2 started (pid=$new_pid)"
-    echo "     URL: http://127.0.0.1:${FRONT_PORT}"
-    echo "     Log: $front_log"
+    if ! detect_ssl_files; then
+      echo "[ERROR] Cannot auto-detect SSL cert/key."
+      echo "        Checked: /root/ninilevel, /root/ninelevel, /root/sslnginx"
+      echo "        Use --front-ssl-cert and --front-ssl-key to specify files."
+      return 1
+    fi
+
+    if [[ ! -f "$FRONT_SSL_CERT" || ! -f "$FRONT_SSL_KEY" ]]; then
+      echo "[ERROR] SSL files not found:"
+      echo "        cert=${FRONT_SSL_CERT}"
+      echo "        key=${FRONT_SSL_KEY}"
+      return 1
+    fi
+
+    (cd "$front_dir" && npm run build)
+    mkdir -p "$FRONT_DIST_DIR"
+    rm -rf "${FRONT_DIST_DIR:?}/"*
+    cp -rf "${front_dir}/dist/"* "$FRONT_DIST_DIR/"
+    chmod -R a+rX "$FRONT_DIST_DIR"
+
+    mkdir -p "$ssl_dir"
+    mkdir -p "$PROJECT_CERT_DIR"
+    cp -f "$FRONT_SSL_CERT" "$ssl_cert_target"
+    cp -f "$FRONT_SSL_KEY" "$ssl_key_target"
+    if [[ "$FRONT_SSL_CERT" != "$project_cert_target" ]]; then
+      cp -f "$FRONT_SSL_CERT" "$project_cert_target"
+    fi
+    if [[ "$FRONT_SSL_KEY" != "$project_key_target" ]]; then
+      cp -f "$FRONT_SSL_KEY" "$project_key_target"
+    fi
+    chmod 600 "$ssl_key_target"
+    chmod 644 "$ssl_cert_target"
+    chmod 600 "$project_key_target"
+    chmod 644 "$project_cert_target"
+
+    nginx_takeover_conf_d_http
+    nginx_takeover_sites_enabled
+
+    cat > "$nginx_site_path" <<EOF
+server {
+    listen 80 default_server;
+    listen [::]:80 default_server;
+    server_name ${FRONT_DOMAIN} _;
+    return 301 https://\$host\$request_uri;
+}
+
+server {
+    listen 443 ssl http2 default_server;
+    listen [::]:443 ssl http2 default_server;
+    server_name ${FRONT_DOMAIN} _;
+
+    ssl_certificate ${ssl_cert_target};
+    ssl_certificate_key ${ssl_key_target};
+
+    root ${FRONT_DIST_DIR};
+    index index.html;
+
+    access_log ${LOG_DIR}/front.nginx.access.log;
+    error_log ${LOG_DIR}/front.nginx.error.log;
+
+    location / {
+        try_files \$uri \$uri/ /index.html;
+    }
+
+    location /api/ {
+        proxy_pass http://127.0.0.1:8090;
+        proxy_http_version 1.1;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+        proxy_read_timeout 300;
+    }
+}
+EOF
+
+    ln -sfn "$nginx_site_path" "$nginx_site_enabled"
+
+    nginx -t
+    systemctl enable nginx >/dev/null 2>&1 || true
+    systemctl restart nginx
+
+    echo "[OK] meme-front-c-v2 deployed by nginx."
+    echo "     HTTP : http://127.0.0.1/"
+    echo "     HTTPS: https://127.0.0.1/"
+    echo "     Domain: https://${FRONT_DOMAIN}/"
+    echo "     Site : ${nginx_site_path}"
+    echo "     Cert : ${FRONT_SSL_CERT}"
+    echo "     Key  : ${FRONT_SSL_KEY}"
+    echo "     Project cert: ${project_cert_target}"
+    echo "     Project key : ${project_key_target}"
+    echo "     停用站点归档: ${ROOT_DIR}/.runtime/nginx-takeover-archive/"
+    echo "[HINT] 若公网仍无法访问，请检查云安全组/本机防火墙是否放行 TCP 80、443。"
   else
-    echo "[ERROR] Failed to start meme-front-c-v2."
-    echo "        Check log: $front_log"
-    return 1
+    (
+      cd "$front_dir"
+      nohup npm run dev -- --port="$FRONT_PORT" --host="$FRONT_HOST" >>"$front_log" 2>&1 &
+      echo $! > "$FRONT_PID_FILE"
+    )
+
+    sleep 1
+    local new_pid
+    new_pid="$(cat "$FRONT_PID_FILE" 2>/dev/null || true)"
+    if [[ -n "$new_pid" ]] && kill -0 "$new_pid" 2>/dev/null; then
+      echo "[OK] meme-front-c-v2 started (pid=$new_pid)"
+      echo "     URL: http://127.0.0.1:${FRONT_PORT}"
+      echo "     Log: $front_log"
+    else
+      echo "[ERROR] Failed to start meme-front-c-v2."
+      echo "        Check log: $front_log"
+      return 1
+    fi
   fi
 }
 

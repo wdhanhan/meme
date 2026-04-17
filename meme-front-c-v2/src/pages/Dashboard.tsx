@@ -222,6 +222,7 @@ interface VoiceAuditionPanelProps {
 
 function VoiceAuditionPanel({ voices, onPlayerChange }: VoiceAuditionPanelProps) {
   const [selected, setSelected] = useState<Voice | null>(voices[0] ?? null);
+  const [ttsRefId, setTtsRefId] = useState(() => voices[0]?.referenceId ?? '');
 
   return (
     <div className="space-y-8">
@@ -244,7 +245,14 @@ function VoiceAuditionPanel({ voices, onPlayerChange }: VoiceAuditionPanelProps)
         <div className="flex flex-wrap gap-4">
           {voices.map((v) => (
             <div key={v.id}>
-              <VoiceCard voice={v} selected={selected?.id === v.id} onClick={() => setSelected(v)} />
+              <VoiceCard
+                voice={v}
+                selected={selected?.id === v.id}
+                onClick={() => {
+                  setSelected(v);
+                  setTtsRefId(v.referenceId ?? '');
+                }}
+              />
             </div>
           ))}
         </div>
@@ -258,10 +266,10 @@ function VoiceAuditionPanel({ voices, onPlayerChange }: VoiceAuditionPanelProps)
 
       {/* TTS */}
       <TtsWorkshopPanel
-        referenceId={selected?.referenceId ?? ''}
-        onReferenceIdChange={() => {}}
+        referenceId={ttsRefId}
+        onReferenceIdChange={setTtsRefId}
         onPlayerUiChange={onPlayerChange}
-        hideReferenceInput
+        referenceIdLabel="音色 ID"
       />
     </div>
   );
@@ -503,7 +511,11 @@ function PricingPanel() {
 // ─────────────────────────────────────────────────────────
 // 账号设置
 // ─────────────────────────────────────────────────────────
-function SettingsPanel() {
+interface SettingsPanelProps {
+  onLogout: () => void;
+}
+
+function SettingsPanel({ onLogout }: SettingsPanelProps) {
   const [notify, setNotify] = useState(true);
   const [autoPlay, setAutoPlay] = useState(false);
   const [slowMode, setSlowMode] = useState(true);
@@ -580,9 +592,20 @@ function SettingsPanel() {
       {/* 安全 */}
       <section className="glass-card rounded-2xl border border-white/60 p-6 space-y-3">
         <h3 className="font-bold text-sm text-primary uppercase tracking-wider">安全与隐私</h3>
-        {['修改密码', '退出登录', '注销账号'].map((item, i) => (
-          <button key={item} className={`w-full flex items-center justify-between px-4 py-3 rounded-xl hover:bg-white/60 transition-colors ${i === 2 ? 'text-red-500' : 'text-on-surface'}`}>
-            <span className="text-sm font-medium">{item}</span>
+        {[
+          { label: '修改密码', danger: false, onClick: () => {} },
+          { label: '退出登录', danger: false, onClick: onLogout },
+          { label: '注销账号', danger: true, onClick: () => {} },
+        ].map(({ label, danger, onClick }) => (
+          <button
+            key={label}
+            type="button"
+            onClick={onClick}
+            className={`w-full flex items-center justify-between px-4 py-3 rounded-xl hover:bg-white/60 transition-colors ${
+              danger ? 'text-red-500' : 'text-on-surface'
+            }`}
+          >
+            <span className="text-sm font-medium">{label}</span>
             <ChevronRight className="w-4 h-4 text-secondary/40" />
           </button>
         ))}
@@ -693,7 +716,7 @@ interface DashboardProps {
   onNavigate: (page: Page) => void;
 }
 
-export default function Dashboard({ onNavigate: _onNavigate }: DashboardProps) {
+export default function Dashboard({ onNavigate }: DashboardProps) {
   const [activeCategory, setActiveCategory] = useState('stories');
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [isPending, startTransition] = useTransition();
@@ -739,7 +762,18 @@ export default function Dashboard({ onNavigate: _onNavigate }: DashboardProps) {
       case 'pricing':
         return <PricingPanel />;
       case 'settings':
-        return <SettingsPanel />;
+        return (
+          <SettingsPanel
+            onLogout={() => {
+              try {
+                localStorage.removeItem('memec_auth_token');
+              } catch {
+                /* ignore */
+              }
+              onNavigate('login');
+            }}
+          />
+        );
       case 'help':
         return <HelpPanel />;
       default:

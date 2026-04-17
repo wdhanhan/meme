@@ -29,6 +29,7 @@
 # Local generated data
 meme-c/data/generations.jsonl
 meme-c/data/training_progress.json
+meme-c/.runtime/
 
 # Binaries
 meme-c/backend/backend

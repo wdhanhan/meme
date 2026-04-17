@@ -29,7 +29,8 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
       });
       const data = await resp.json().catch(() => ({}));
       if (!resp.ok) {
-        throw new Error(data.error || `HTTP ${resp.status}`);
+        const msg = [data.error, data.detail].filter(Boolean).join(' — ');
+        throw new Error(msg || `HTTP ${resp.status}`);
       }
       setStatus('验证码已发送，请注意查收短信');
     } catch (e) {
@@ -46,22 +47,23 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
       return;
     }
     setLoggingIn(true);
-    setStatus('登录中…');
+    setStatus(authMode === 'login' ? '登录中…' : '进入中…');
     try {
-      const endpoint = authMode === 'login' ? '/api/auth/sms/login' : '/api/auth/sms/register';
-      const resp = await fetch(endpoint, {
+      // 登录接口已对手机号 UPSERT：新用户自动创建，与「注册」一致，避免未建账号时走 register 其它逻辑
+      const resp = await fetch('/api/auth/sms/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ phone: phone.trim(), code: smsCode.trim() }),
       });
       const data = await resp.json().catch(() => ({}));
       if (!resp.ok) {
-        throw new Error(data.error || `HTTP ${resp.status}`);
+        const msg = [data.error, data.detail].filter(Boolean).join(' — ');
+        throw new Error(msg || `HTTP ${resp.status}`);
       }
       if (data.token) {
         localStorage.setItem('memec_auth_token', data.token);
       }
-      setStatus(authMode === 'login' ? '登录成功' : '注册成功');
+      setStatus('登录成功');
       onLogin();
     } catch (e) {
       const action = authMode === 'login' ? '登录' : '注册';

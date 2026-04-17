@@ -20,6 +20,8 @@ export default function VoiceAuditionPage({ onNavigate, initialVoiceId }: VoiceA
   const [voices, setVoices] = useState<Voice[]>([...VOICES]);
   const initial = voices.find((v) => v.referenceId === initialVoiceId) ?? voices[0] ?? null;
   const [selectedVoice, setSelectedVoice] = useState<Voice | null>(initial);
+  /** 试音请求使用的音色 ID，可与卡片联动，也可手填任意已存在的 reference_id */
+  const [ttsRefId, setTtsRefId] = useState(initial?.referenceId ?? '');
   const [ttsPlayer, setTtsPlayer] = useState<TtsPlayerBarState | null>(null);
 
   // ── 上传面板展开状态 ──────────────────────────────
@@ -34,8 +36,6 @@ export default function VoiceAuditionPage({ onNavigate, initialVoiceId }: VoiceA
   const [uploadKind, setUploadKind] = useState<'idle' | 'loading' | 'ok' | 'err'>('idle');
   const [uploading, setUploading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
-
-  const referenceId = selectedVoice?.referenceId ?? '';
 
   function authHeaders(): Record<string, string> {
     const token = localStorage.getItem('memec_auth_token') || '';
@@ -109,6 +109,7 @@ export default function VoiceAuditionPage({ onNavigate, initialVoiceId }: VoiceA
       };
       setVoices((prev) => [...prev, newVoice]);
       setSelectedVoice(newVoice);
+      setTtsRefId(newVoice.referenceId);
       setUploadKind('ok');
       setUploadStatus(`上传成功！音色「${newVoice.name}」已添加，可立即试音。`);
       // 重置表单
@@ -194,7 +195,10 @@ export default function VoiceAuditionPage({ onNavigate, initialVoiceId }: VoiceA
                   <VoiceCard
                     voice={voice}
                     selected={selectedVoice?.id === voice.id}
-                    onClick={() => setSelectedVoice(voice)}
+                    onClick={() => {
+                      setSelectedVoice(voice);
+                      setTtsRefId(voice.referenceId ?? '');
+                    }}
                   />
                 </motion.div>
               ))}
@@ -210,10 +214,10 @@ export default function VoiceAuditionPage({ onNavigate, initialVoiceId }: VoiceA
 
           {/* ── TTS 合成 ─────────────────────────────── */}
           <TtsWorkshopPanel
-            referenceId={referenceId}
-            onReferenceIdChange={() => {}}
+            referenceId={ttsRefId}
+            onReferenceIdChange={setTtsRefId}
             onPlayerUiChange={setTtsPlayer}
-            hideReferenceInput
+            referenceIdLabel="音色 ID"
           />
 
           {/* ── 添加新音色（折叠） ───────────────────── */}
