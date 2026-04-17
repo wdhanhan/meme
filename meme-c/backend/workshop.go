@@ -63,6 +63,39 @@ type workshopWorker struct {
 
 var globalWorkshopWorker *workshopWorker
 
+func hasFishPauseTag(s string) bool {
+	return strings.Contains(s, "[break]") || strings.Contains(s, "[long-break]") || strings.Contains(s, "[breath]")
+}
+
+func injectBreakTagsForSleep(s string) string {
+	s = strings.TrimSpace(s)
+	if s == "" || hasFishPauseTag(s) {
+		return s
+	}
+	replacer := strings.NewReplacer(
+		"，", "，[break]",
+		",", ",[break]",
+		"。", "。[long-break]",
+		"！", "！[long-break]",
+		"？", "？[long-break]",
+		"；", "；[long-break]",
+		"：", "：[long-break]",
+		".", ".[long-break]",
+		"!", "![long-break]",
+		"?", "?[long-break]",
+		";", ";[long-break]",
+		":", ":[long-break]",
+	)
+	out := strings.TrimSpace(replacer.Replace(s))
+	if out == "" {
+		return s
+	}
+	if !hasFishPauseTag(out) {
+		out += "[break]"
+	}
+	return out
+}
+
 func initWorkshopWorker(ctx context.Context, db *sql.DB, cfg AppConfig, refs *referenceIndex, ttsQueues map[string]chan ttsJob) {
 	globalWorkshopWorker = &workshopWorker{
 		db:        db,
@@ -134,6 +167,7 @@ func (w *workshopWorker) enqueue(jobID int64) {
 }
 
 func (w *workshopWorker) processJob(ctx context.Context, jobID int64) {
+	tAll := time.Now()
 	// Atomically claim the job (only if still pending).
 	res, err := w.db.ExecContext(ctx, `UPDATE workshop_jobs SET status='processing', updated_at=NOW() WHERE id=$1 AND status='pending'`, jobID)
 	if err != nil {
@@ -154,6 +188,23 @@ func (w *workshopWorker) processJob(ctx context.Context, jobID int64) {
 	if speed <= 0 {
 		speed = 1.0
 	}
+	rec := &GenerationRecord{
+		ID:          newGenerationID(),
+		CreatedAt:   time.Now().UTC().Format(time.RFC3339Nano),
+		Kind:        "workshop_multi_segment",
+		ReferenceID: strings.TrimSpace(referenceID),
+		Mode:        strings.TrimSpace(mode),
+		Speed:       speed,
+		TextPreview: previewText(text, 160),
+		Success:     false,
+	}
+	if rec.Mode == "" {
+		rec.Mode = "normal"
+	}
+	defer func() {
+		rec.TotalMs = time.Since(tAll).Milliseconds()
+		appendGeneration(*rec)
+	}()
 
 	// Segment text via DeepSeek.
 	isSleep := strings.ToLower(strings.TrimSpace(mode)) == "sleep"
@@ -165,6 +216,9 @@ func (w *workshopWorker) processJob(ctx context.Context, jobID int64) {
 			segs = []string{text}
 		}
 		segments = filterNonEmptySegments(segs)
+		for i := range segments {
+			segments[i] = injectBreakTagsForSleep(segments[i])
+		}
 	} else {
 		segs, segErr := segmentTextArrayWithDeepSeek(text)
 		if segErr != nil {
@@ -181,6 +235,8 @@ func (w *workshopWorker) processJob(ctx context.Context, jobID int64) {
 		tail := strings.Join(segments[maxSegs-1:], "")
 		segments = append(append([]string{}, segments[:maxSegs-1]...), tail)
 	}
+	rec.SegmentCount = len(segments)
+	rec.FinalInputText = strings.Join(segments, "\n")
 
 	_, _ = w.db.ExecContext(ctx, `UPDATE workshop_jobs SET segment_count=$1, updated_at=NOW() WHERE id=$2`, len(segments), jobID)
 
@@ -249,6 +305,7 @@ func (w *workshopWorker) processJob(ctx context.Context, jobID int64) {
 	for range segments {
 		sr := <-resultCh
 		if sr.err != nil {
+			rec.Error = fmt.Sprintf("segment %d: %s", sr.idx, sr.err)
 			w.failJob(jobID, fmt.Sprintf("segment %d: %s", sr.idx, sr.err))
 			return
 		}
@@ -264,6 +321,7 @@ func (w *workshopWorker) processJob(ctx context.Context, jobID int64) {
 	} else {
 		fullMP3, err = concatMP3Segs(mp3Segs)
 		if err != nil {
+			rec.Error = "concat: " + err.Error()
 			w.failJob(jobID, "concat: "+err.Error())
 			return
 		}
@@ -272,16 +330,19 @@ func (w *workshopWorker) processJob(ctx context.Context, jobID int64) {
 	// Save to disk.
 	audioDir := filepath.Join(adminDataDir(), "workshop", fmt.Sprintf("%d", userID))
 	if mkErr := os.MkdirAll(audioDir, 0755); mkErr != nil {
+		rec.Error = "mkdir: " + mkErr.Error()
 		w.failJob(jobID, "mkdir: "+mkErr.Error())
 		return
 	}
 	audioPath := filepath.Join(audioDir, fmt.Sprintf("%d.mp3", jobID))
 	if wErr := os.WriteFile(audioPath, fullMP3, 0644); wErr != nil {
+		rec.Error = "write file: " + wErr.Error()
 		w.failJob(jobID, "write file: "+wErr.Error())
 		return
 	}
 
 	_, _ = w.db.ExecContext(ctx, `UPDATE workshop_jobs SET status='done', audio_path=$1, segments_done=segment_count, updated_at=NOW() WHERE id=$2`, audioPath, jobID)
+	rec.Success = true
 	fmt.Printf("[workshop] job %d done segments=%d bytes=%d\n", jobID, len(segments), len(fullMP3))
 }
 

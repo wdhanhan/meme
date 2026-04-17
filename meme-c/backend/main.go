@@ -1383,6 +1383,7 @@ func main() {
 			segments = append(append([]string{}, segments[:maxSegs-1]...), rest)
 		}
 		rec.SegmentCount = len(segments)
+		rec.FinalInputText = strings.Join(segments, "\n")
 
 		upstreamPlan := make([]string, len(segments))
 		for i := range segments {

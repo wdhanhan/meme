@@ -20,6 +20,7 @@ type GenerationRecord struct {
 	Mode               string   `json:"mode"`
 	Speed              float64  `json:"speed"`
 	TextPreview        string   `json:"text_preview"`
+	FinalInputText     string   `json:"final_input_text,omitempty"` // 送进 GPU 前的最终文本（含标签）
 	SegmentCount       int      `json:"segment_count"`
 	FirstMetaMs        int64    `json:"first_meta_ms"`         // 首行 meta 写出耗时
 	FirstAudioMs       int64    `json:"first_audio_ms"`        // 首段可播 MP3 chunk 写出耗时

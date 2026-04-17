@@ -243,28 +243,39 @@ export default function WorkshopPanel({ voices }: WorkshopPanelProps) {
 
   // ── Import helpers ──
 
-  function parseText(raw: string): PendingEntry[] {
-    return raw
-      .split(/\n{2,}/)
-      .map(p => p.trim())
-      .filter(p => p.length >= 10)
-      .map((p, i) => ({
-        localId: `e_${Date.now()}_${i}`,
-        title: p.replace(/\n/g, ' ').slice(0, 40) + (p.length > 40 ? '…' : ''),
-        text: p,
-      }));
+  function sanitizeFileTitle(name: string): string {
+    const base = name.replace(/\.[^./\\]+$/, '').trim();
+    return base || name;
   }
 
-  async function handleFileDrop(file: File) {
-    setImportMsg('读取中…');
-    try {
-      const parsed = parseText(await file.text());
-      if (parsed.length === 0) { setImportMsg('未找到有效段落（段落间请用空行分隔）'); return; }
-      setEntries(prev => [...prev, ...parsed]);
-      setImportMsg(`已导入 ${parsed.length} 个段落，来自「${file.name}」`);
-    } catch (e) {
-      setImportMsg(`读取失败：${e instanceof Error ? e.message : String(e)}`);
+  async function handleFiles(files: FileList | File[] | null | undefined) {
+    const list = files ? Array.from(files) : [];
+    if (list.length === 0) return;
+    setImportMsg(`读取中…（${list.length} 个文件）`);
+    const nextEntries: PendingEntry[] = [];
+    let skipped = 0;
+    for (const [i, file] of list.entries()) {
+      try {
+        const content = (await file.text()).trim();
+        if (!content) {
+          skipped++;
+          continue;
+        }
+        nextEntries.push({
+          localId: `f_${Date.now()}_${i}`,
+          title: sanitizeFileTitle(file.name),
+          text: content,
+        });
+      } catch {
+        skipped++;
+      }
     }
+    if (nextEntries.length === 0) {
+      setImportMsg('导入失败：文件内容为空或不可读取');
+      return;
+    }
+    setEntries(prev => [...prev, ...nextEntries]);
+    setImportMsg(`已导入 ${nextEntries.length} 个文件${skipped > 0 ? `（跳过 ${skipped} 个）` : ''}`);
   }
 
   function addManual() {
@@ -360,16 +371,17 @@ export default function WorkshopPanel({ voices }: WorkshopPanelProps) {
               className="border-2 border-dashed border-primary/20 rounded-xl p-6 text-center hover:border-primary/40 hover:bg-primary/5 transition-colors cursor-pointer select-none"
               onClick={() => fileInputRef.current?.click()}
               onDragOver={e => e.preventDefault()}
-              onDrop={e => { e.preventDefault(); const f = e.dataTransfer.files[0]; if (f) void handleFileDrop(f); }}
+              onDrop={e => { e.preventDefault(); void handleFiles(e.dataTransfer.files); }}
             >
               <Upload className="w-8 h-8 text-primary/30 mx-auto mb-2" />
-              <p className="text-sm font-medium text-secondary">点击或拖放文件</p>
-              <p className="text-xs text-secondary/50 mt-1">支持 .txt .md .text，以空行分隔段落，每段生成一条语音</p>
+              <p className="text-sm font-medium text-secondary">点击或拖放多个文件</p>
+              <p className="text-xs text-secondary/50 mt-1">支持 .txt .md .text；每个文件生成一条语音任务</p>
               <input
                 ref={fileInputRef} type="file"
+                multiple
                 accept=".txt,.md,.text,text/plain,text/markdown"
                 className="hidden"
-                onChange={e => { const f = e.target.files?.[0]; if (f) void handleFileDrop(f); e.target.value = ''; }}
+                onChange={e => { void handleFiles(e.target.files); e.target.value = ''; }}
               />
             </div>
             {importMsg && <p className="text-xs text-secondary/70">{importMsg}</p>}

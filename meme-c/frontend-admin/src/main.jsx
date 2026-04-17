@@ -196,6 +196,12 @@ function RecordCard({ rec }) {
       {open && (
         <div className="rec-detail">
           {rec.error && <div className="error-msg">错误：{rec.error}</div>}
+          {rec.final_input_text && (
+            <>
+              <div className="detail-label">最终送入 GPU 文本</div>
+              <pre className="train-msg" style={{ whiteSpace: 'pre-wrap' }}>{rec.final_input_text}</pre>
+            </>
+          )}
           <div className="detail-label">各分片耗时</div>
           <SegmentChart tts={ttsList} enc={encList} />
           {rec.optimize_ms > 0 && (
