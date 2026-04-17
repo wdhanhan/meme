@@ -25,6 +25,7 @@
 # Python cache
 **/__pycache__/
 **/*.pyc
+.venvs/
 
 # Local generated data
 meme-c/data/generations.jsonl
