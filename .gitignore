@@ -31,6 +31,10 @@ meme-c/data/generations.jsonl
 meme-c/data/training_progress.json
 meme-c/.runtime/
 
+# Fish Audio Pro model files
+meme/fish-speech/checkpoints/s2-pro/
+meme/fishaudio-s2-pro/
+
 # Binaries
 meme-c/backend/backend
 meme-c/backend/meme-c-backend
