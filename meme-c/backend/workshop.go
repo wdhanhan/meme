@@ -206,27 +206,14 @@ func (w *workshopWorker) processJob(ctx context.Context, jobID int64) {
 		appendGeneration(*rec)
 	}()
 
-	// Segment text via DeepSeek.
-	isSleep := strings.ToLower(strings.TrimSpace(mode)) == "sleep"
-	var segments []string
-	if isSleep {
-		segs, segErr := segmentAndBreatheWithDeepSeek(text)
-		if segErr != nil {
-			fmt.Printf("[workshop] job %d sleep-segment fallback: %v\n", jobID, segErr)
-			segs = []string{text}
-		}
-		segments = filterNonEmptySegments(segs)
-		for i := range segments {
-			segments[i] = injectBreakTagsForSleep(segments[i])
-		}
-	} else {
-		segs, segErr := segmentTextArrayWithDeepSeek(text)
-		if segErr != nil {
-			fmt.Printf("[workshop] job %d normal-segment fallback: %v\n", jobID, segErr)
-			segs = []string{text}
-		}
-		segments = filterNonEmptySegments(segs)
+	// 本地分段 + Fish 气口标签（与 /api/tts/multi-segment-stream 一致）
+	tPrep := time.Now()
+	segs, segErr := segmentTextArrayWithLocalBreath(text)
+	if segErr != nil {
+		fmt.Printf("[workshop] job %d segment fallback: %v\n", jobID, segErr)
+		segs = []string{text}
 	}
+	segments := filterNonEmptySegments(segs)
 	if len(segments) == 0 {
 		segments = []string{text}
 	}
@@ -237,6 +224,9 @@ func (w *workshopWorker) processJob(ctx context.Context, jobID int64) {
 	}
 	rec.SegmentCount = len(segments)
 	rec.FinalInputText = strings.Join(segments, "\n")
+	rec.DeepSeekMs = time.Since(tPrep).Milliseconds()
+	rec.OptimizeMs = rec.DeepSeekMs
+	rec.FirstMetaMs = time.Since(tAll).Milliseconds()
 
 	_, _ = w.db.ExecContext(ctx, `UPDATE workshop_jobs SET segment_count=$1, updated_at=NOW() WHERE id=$2`, len(segments), jobID)
 
@@ -249,9 +239,12 @@ func (w *workshopWorker) processJob(ctx context.Context, jobID int64) {
 	}
 
 	type segResult struct {
-		idx int
-		mp3 []byte
-		err error
+		idx           int
+		mp3           []byte
+		ttsMs         int64
+		encMs         int64
+		firstAudioMs  int64 // 仅 idx==0：相对任务开始的 wall 时间，与 multi_segment 的 first_audio_ms 一致
+		err           error
 	}
 	resultCh := make(chan segResult, len(segments))
 
@@ -271,7 +264,9 @@ func (w *workshopWorker) processJob(ctx context.Context, jobID int64) {
 				resultCh <- segResult{idx: idx, err: fmt.Errorf("no queue for api %s", api)}
 				return
 			}
+			tTTS := time.Now()
 			ttsRes, jErr := submitTTSJob(ctx, q, payload, false)
+			ttsDur := time.Since(tTTS).Milliseconds()
 			if jErr != nil {
 				resultCh <- segResult{idx: idx, err: jErr}
 				return
@@ -284,6 +279,7 @@ func (w *workshopWorker) processJob(ctx context.Context, jobID int64) {
 				resultCh <- segResult{idx: idx, err: fmt.Errorf("upstream status %d", ttsRes.statusCode)}
 				return
 			}
+			tEnc := time.Now()
 			wav := ttsRes.body
 			if speed != 1.0 {
 				if adj, aerr := adjustWavSpeed(wav, speed); aerr == nil {
@@ -291,16 +287,23 @@ func (w *workshopWorker) processJob(ctx context.Context, jobID int64) {
 				}
 			}
 			mp3, merr := wavToMp3Bytes(wav)
+			encDur := time.Since(tEnc).Milliseconds()
 			if merr != nil {
 				resultCh <- segResult{idx: idx, err: merr}
 				return
 			}
-			resultCh <- segResult{idx: idx, mp3: mp3}
+			var fa int64
+			if idx == 0 {
+				fa = time.Since(tAll).Milliseconds()
+			}
+			resultCh <- segResult{idx: idx, mp3: mp3, ttsMs: ttsDur, encMs: encDur, firstAudioMs: fa}
 		}(i, seg)
 	}
 
 	// Collect results in any order.
 	mp3Segs := make([][]byte, len(segments))
+	ttsMs := make([]int64, len(segments))
+	encMs := make([]int64, len(segments))
 	done := 0
 	for range segments {
 		sr := <-resultCh
@@ -310,9 +313,16 @@ func (w *workshopWorker) processJob(ctx context.Context, jobID int64) {
 			return
 		}
 		mp3Segs[sr.idx] = sr.mp3
+		ttsMs[sr.idx] = sr.ttsMs
+		encMs[sr.idx] = sr.encMs
+		if sr.idx == 0 && sr.firstAudioMs > 0 {
+			rec.FirstAudioMs = sr.firstAudioMs
+		}
 		done++
 		_, _ = w.db.ExecContext(ctx, `UPDATE workshop_jobs SET segments_done=$1, updated_at=NOW() WHERE id=$2`, done, jobID)
 	}
+	rec.TtsPerSegmentMs = ttsMs
+	rec.EncodePerSegmentMs = encMs
 
 	// Concatenate all MP3 segments.
 	var fullMP3 []byte

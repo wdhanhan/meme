@@ -49,23 +49,6 @@ type multiSegmentStreamRequest struct {
 	MaxNewTokens int     `json:"max_new_tokens,omitempty"`
 }
 
-type deepSeekMessage struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
-}
-
-type deepSeekRequest struct {
-	Model       string            `json:"model"`
-	Messages    []deepSeekMessage `json:"messages"`
-	Temperature float64           `json:"temperature"`
-}
-
-type deepSeekResponse struct {
-	Choices []struct {
-		Message deepSeekMessage `json:"message"`
-	} `json:"choices"`
-}
-
 type ttsJob struct {
 	payload  []byte
 	wantsM4A bool
@@ -136,19 +119,20 @@ func (ri *referenceIndex) apisForReference(refID string) []string {
 	return apis
 }
 
-const deepSeekAPIKey = "sk-f96a655e607b4fe2a224748ec250d4f5"
-const deepSeekURL = "https://api.deepseek.com/chat/completions"
 const fishErrLogPath = "/root/meme/logs/fish-s2-pro.err.log"
 
-func splitTextForDeepSeek(text string, maxRunes int) []string {
+// segmentTextLocalChunks 按标点优先、每段不超过 maxRunes 字切分（无外部 API）。
+func segmentTextLocalChunks(text string, maxRunes int) []string {
 	if maxRunes <= 0 {
-		maxRunes = 260
+		maxRunes = 130
 	}
 	runes := []rune(strings.TrimSpace(text))
+	if len(runes) == 0 {
+		return nil
+	}
 	if len(runes) <= maxRunes {
 		return []string{strings.TrimSpace(text)}
 	}
-
 	var chunks []string
 	start := 0
 	for start < len(runes) {
@@ -156,12 +140,12 @@ func splitTextForDeepSeek(text string, maxRunes int) []string {
 		if end >= len(runes) {
 			end = len(runes)
 		} else {
-			// 优先在中文标点处切分，减少语义断裂
+		search:
 			for i := end; i > start+maxRunes/2; i-- {
 				switch runes[i-1] {
-				case '。', '！', '？', '；', '，', ',', '.', '!', '?', ';':
+				case '。', '！', '？', '；', '，', ',', '.', '!', '?', ';', '、':
 					end = i
-					i = start // break loop
+					break search
 				}
 			}
 		}
@@ -172,6 +156,48 @@ func splitTextForDeepSeek(text string, maxRunes int) []string {
 		start = end
 	}
 	return chunks
+}
+
+// segmentTextArrayLocal 长文本先按 2000 字块再细分，供多路 TTS。
+func segmentTextArrayLocal(text string) ([]string, error) {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return nil, fmt.Errorf("empty text")
+	}
+	const maxRunes = 2000
+	runes := []rune(text)
+	if len(runes) <= maxRunes {
+		return segmentTextLocalChunks(text, 130), nil
+	}
+	var all []string
+	for start := 0; start < len(runes); start += maxRunes {
+		end := start + maxRunes
+		if end > len(runes) {
+			end = len(runes)
+		}
+		part := strings.TrimSpace(string(runes[start:end]))
+		if part == "" {
+			continue
+		}
+		sub := segmentTextLocalChunks(part, 130)
+		all = append(all, sub...)
+	}
+	if len(all) == 0 {
+		return []string{text}, nil
+	}
+	return all, nil
+}
+
+// segmentTextArrayWithLocalBreath 本地分段后在标点后插入 Fish 气口标签（[break] / [long-break]）。
+func segmentTextArrayWithLocalBreath(text string) ([]string, error) {
+	segs, err := segmentTextArrayLocal(text)
+	if err != nil {
+		return nil, err
+	}
+	for i := range segs {
+		segs[i] = injectBreakTagsForSleep(segs[i])
+	}
+	return segs, nil
 }
 
 func appendLineToFile(path, line string) {
@@ -202,59 +228,6 @@ func formatTextForLog(s string) string {
 	return strings.Join(cleaned, "\n")
 }
 
-func optimizeTextWithDeepSeek(text, systemPrompt string) (string, error) {
-	chunks := splitTextForDeepSeek(text, 260)
-	client := &http.Client{Timeout: 30 * time.Second}
-	var out []string
-
-	for idx, chunk := range chunks {
-		reqBody := deepSeekRequest{
-			Model: "deepseek-chat",
-			Messages: []deepSeekMessage{
-				{Role: "system", Content: systemPrompt},
-				{Role: "user", Content: chunk},
-			},
-			Temperature: 0.5,
-		}
-
-		payload, err := json.Marshal(reqBody)
-		if err != nil {
-			return text, err
-		}
-
-		req, err := http.NewRequest(http.MethodPost, deepSeekURL, bytes.NewReader(payload))
-		if err != nil {
-			return text, err
-		}
-		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("Authorization", "Bearer "+deepSeekAPIKey)
-
-		resp, err := client.Do(req)
-		if err != nil {
-			return text, err
-		}
-		body, err := io.ReadAll(resp.Body)
-		resp.Body.Close()
-		if err != nil {
-			return text, err
-		}
-		if resp.StatusCode >= 400 {
-			return text, fmt.Errorf("deepseek http %d at chunk %d: %s", resp.StatusCode, idx+1, string(body))
-		}
-
-		var parsed deepSeekResponse
-		if err := json.Unmarshal(body, &parsed); err != nil {
-			return text, err
-		}
-		if len(parsed.Choices) == 0 || strings.TrimSpace(parsed.Choices[0].Message.Content) == "" {
-			return text, fmt.Errorf("deepseek empty response at chunk %d", idx+1)
-		}
-		out = append(out, strings.TrimSpace(parsed.Choices[0].Message.Content))
-	}
-
-	return strings.Join(out, "[long-break]"), nil
-}
-
 func addBreathByMode(text string, mode string) (string, error) {
 	mode = strings.ToLower(strings.TrimSpace(mode))
 	if mode == "" || mode == "normal" {
@@ -263,239 +236,7 @@ func addBreathByMode(text string, mode string) (string, error) {
 	if mode != "sleep" {
 		return text, nil
 	}
-
-	systemPrompt := `你是TTS文本优化助手。任务：把用户文本改写为“睡前模式”，加入自然气口与停顿，但不要改变原意。
-规则：
-1) 只输出最终可朗读文本，不要解释。
-2) 仅使用 Fish-Speech 控制符：[break]、[long-break]、[breath]。
-3) 常规句间停顿优先用 [break]；段落或明显停顿用 [long-break]；需要呼吸感时用 [breath]。
-4) 整体语气柔和、缓慢，避免夸张情绪。
-5) 保持中文自然，不要过度加标签。`
-
-	return optimizeTextWithDeepSeek(text, systemPrompt)
-}
-
-// segmentJSONSystemPrompt 用于普通模式：仅断句，不添加气口标签。
-// 每片 120-150 字，片数少、每片音频质量更好、TTS 并发开销也更低。
-const segmentJSONSystemPrompt = `你是中文文本断句助手。用户给出一段将用于语音合成的文本（可能含 Fish-Speech 停顿标签如 [break]、[long-break]、[breath]）。
-请按语义与朗读节奏拆成若干段，使每段可单独合成语音。
-硬性要求：
-1) 只输出一个 JSON 数组，元素为字符串；不要 markdown 代码块，不要任何解释或前后缀。
-2) 保留原文用词与停顿标签，不要改写句意；仅做拆分与必要标点。
-3) 每段 120-150 个汉字（含标签），不超过 150 字；语义完整的短文可合并为一段。
-4) 每段实际可朗读内容（去掉标签后）不少于 15 个汉字；极短句子（如"嗯。""好！"）必须合并到相邻段。
-5) 禁止输出仅含 [break]、[long-break]、[breath] 标签的元素，标签必须附在有实际内容的段落中。
-6) 不要重复输出同一段内容，每段内容唯一。
-7) 至少 1 段；全文很短时可只输出包含整段的一个元素的数组。`
-
-// segmentAndBreatheJSONSystemPrompt 用于睡前模式：一次调用同时完成气口优化与断句，
-// 替换原来的「addBreathByMode + segmentTextArrayWithDeepSeek」两步，减少延迟并防止
-// 断句时丢失气口标签（模型对整段文本统一规划气口分布，尾段不会遗漏）。
-const segmentAndBreatheJSONSystemPrompt = `你是TTS文本处理助手，专门服务睡前故事朗读。任务：将用户文本同时进行气口优化和断句，输出可直接送入语音合成的分片数组。
-输出格式：只输出一个 JSON 数组；每个元素是一段带气口标签的可朗读文本；不要 markdown，不要任何解释。
-规则：
-1) 使用 Fish-Speech 标签：句间短停顿用 [break]，段落/明显停顿用 [long-break]，需要呼吸感时在句末用 [breath]。
-2) 全文气口均匀分布（包括最后几片），不能前密后疏；每片 1-2 个气口标签即可，不过度堆砌。
-3) 每片 120-150 个汉字（含标签字符），语义完整，不超过 150 字。
-4) 每片实际可朗读内容（去掉标签后）不少于 15 个汉字；极短句子（如"嗯。""好！"）必须合并到相邻片。
-5) 禁止输出仅含标签的元素，标签必须嵌入有实际文字的段落中。
-6) 不要重复输出同一片内容，每片内容唯一。
-7) 语气柔和、缓慢，适合睡前；保留原文用词，不改写句意，不添加多余内容。`
-
-func extractJSONArrayBytes(content string) ([]byte, error) {
-	s := strings.TrimSpace(content)
-	if strings.HasPrefix(s, "```") {
-		s = strings.TrimPrefix(s, "```")
-		s = strings.TrimPrefix(s, "json")
-		s = strings.TrimSpace(s)
-		if idx := strings.Index(s, "```"); idx >= 0 {
-			s = strings.TrimSpace(s[:idx])
-		}
-	}
-	lb := strings.Index(s, "[")
-	rb := strings.LastIndex(s, "]")
-	if lb < 0 || rb <= lb {
-		return nil, fmt.Errorf("no JSON array in model output")
-	}
-	return []byte(s[lb : rb+1]), nil
-}
-
-func segmentTextArraySingleCall(text string) ([]string, error) {
-	text = strings.TrimSpace(text)
-	if text == "" {
-		return nil, fmt.Errorf("empty text")
-	}
-	client := &http.Client{Timeout: 90 * time.Second}
-	reqBody := deepSeekRequest{
-		Model: "deepseek-chat",
-		Messages: []deepSeekMessage{
-			{Role: "system", Content: segmentJSONSystemPrompt},
-			{Role: "user", Content: text},
-		},
-		Temperature: 0.2,
-	}
-	payload, err := json.Marshal(reqBody)
-	if err != nil {
-		return nil, err
-	}
-	req, err := http.NewRequest(http.MethodPost, deepSeekURL, bytes.NewReader(payload))
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+deepSeekAPIKey)
-
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	body, err := io.ReadAll(resp.Body)
-	resp.Body.Close()
-	if err != nil {
-		return nil, err
-	}
-	if resp.StatusCode >= 400 {
-		return nil, fmt.Errorf("deepseek http %d: %s", resp.StatusCode, string(body))
-	}
-	var parsed deepSeekResponse
-	if err := json.Unmarshal(body, &parsed); err != nil {
-		return nil, err
-	}
-	if len(parsed.Choices) == 0 {
-		return nil, fmt.Errorf("deepseek empty choices")
-	}
-	raw := strings.TrimSpace(parsed.Choices[0].Message.Content)
-	arrBytes, err := extractJSONArrayBytes(raw)
-	if err != nil {
-		return nil, err
-	}
-	var arr []string
-	if err := json.Unmarshal(arrBytes, &arr); err != nil {
-		return nil, fmt.Errorf("json unmarshal segments: %w", err)
-	}
-	return arr, nil
-}
-
-// segmentTextArrayWithDeepSeek 将整段文本拆成短句数组；过长时按块多次请求并拼接。
-func segmentTextArrayWithDeepSeek(text string) ([]string, error) {
-	text = strings.TrimSpace(text)
-	if text == "" {
-		return nil, fmt.Errorf("empty text")
-	}
-	const maxRunes = 2000
-	runes := []rune(text)
-	if len(runes) <= maxRunes {
-		return segmentTextArraySingleCall(text)
-	}
-	var all []string
-	for start := 0; start < len(runes); start += maxRunes {
-		end := start + maxRunes
-		if end > len(runes) {
-			end = len(runes)
-		}
-		part := strings.TrimSpace(string(runes[start:end]))
-		if part == "" {
-			continue
-		}
-		sub, err := segmentTextArraySingleCall(part)
-		if err != nil {
-			return nil, err
-		}
-		all = append(all, sub...)
-	}
-	if len(all) == 0 {
-		return []string{text}, nil
-	}
-	return all, nil
-}
-
-// segmentAndBreatheWithDeepSeek 睡前模式专用：一次 DeepSeek 调用同时完成气口优化和断句，
-// 替换原来的两步调用，避免断句时丢失气口标签，且尾段气口分布与前段保持一致。
-func segmentAndBreatheWithDeepSeek(text string) ([]string, error) {
-	text = strings.TrimSpace(text)
-	if text == "" {
-		return nil, fmt.Errorf("empty text")
-	}
-	const maxRunes = 2000
-	runes := []rune(text)
-	if len(runes) <= maxRunes {
-		return segmentAndBreatheSingleCall(text)
-	}
-	var all []string
-	for start := 0; start < len(runes); start += maxRunes {
-		end := start + maxRunes
-		if end > len(runes) {
-			end = len(runes)
-		}
-		part := strings.TrimSpace(string(runes[start:end]))
-		if part == "" {
-			continue
-		}
-		sub, err := segmentAndBreatheSingleCall(part)
-		if err != nil {
-			return nil, err
-		}
-		all = append(all, sub...)
-	}
-	if len(all) == 0 {
-		return []string{text}, nil
-	}
-	return all, nil
-}
-
-func segmentAndBreatheSingleCall(text string) ([]string, error) {
-	text = strings.TrimSpace(text)
-	if text == "" {
-		return nil, fmt.Errorf("empty text")
-	}
-	client := &http.Client{Timeout: 120 * time.Second}
-	reqBody := deepSeekRequest{
-		Model: "deepseek-chat",
-		Messages: []deepSeekMessage{
-			{Role: "system", Content: segmentAndBreatheJSONSystemPrompt},
-			{Role: "user", Content: text},
-		},
-		Temperature: 0.3,
-	}
-	payload, err := json.Marshal(reqBody)
-	if err != nil {
-		return nil, err
-	}
-	req, err := http.NewRequest(http.MethodPost, deepSeekURL, bytes.NewReader(payload))
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+deepSeekAPIKey)
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	body, err := io.ReadAll(resp.Body)
-	resp.Body.Close()
-	if err != nil {
-		return nil, err
-	}
-	if resp.StatusCode >= 400 {
-		return nil, fmt.Errorf("deepseek http %d: %s", resp.StatusCode, string(body))
-	}
-	var parsed deepSeekResponse
-	if err := json.Unmarshal(body, &parsed); err != nil {
-		return nil, err
-	}
-	if len(parsed.Choices) == 0 {
-		return nil, fmt.Errorf("deepseek empty choices")
-	}
-	raw := strings.TrimSpace(parsed.Choices[0].Message.Content)
-	arrBytes, err := extractJSONArrayBytes(raw)
-	if err != nil {
-		return nil, err
-	}
-	var arr []string
-	if err := json.Unmarshal(arrBytes, &arr); err != nil {
-		return nil, fmt.Errorf("json unmarshal sleep segments: %w", err)
-	}
-	return arr, nil
+	return injectBreakTagsForSleep(text), nil
 }
 
 func pickAPIForSegment(segIndex int, req TTSRequest, apis []string, refs *referenceIndex) string {
@@ -537,7 +278,6 @@ func filterNonEmptySegments(segs []string) []string {
 }
 
 // fishTagOnly 匹配仅由 Fish-Speech 停顿标签和空白构成的字符串，无实际可朗读内容。
-// 这类段落由 DeepSeek 幻觉生成（如把 "[breath]" 单独切成一段），直接合并到相邻段。
 var fishTagOnly = func() func(string) bool {
 	replacer := strings.NewReplacer(
 		"[break]", "",
@@ -549,10 +289,10 @@ var fishTagOnly = func() func(string) bool {
 	}
 }()
 
-// cleanSegments 对 DeepSeek 返回的分片做清洗：
+// cleanSegments 对分片做清洗：
 //  1. 丢弃空段和纯标签段（将标签内容追加到下一有效段）
 //  2. 将实际内容 < 10 字的极短段合并到上一段（避免产生不足 1 秒的音频碎片）
-//  3. 删除相邻完全相同的段（DeepSeek 幻觉导致的重复）
+//  3. 删除相邻完全相同的段
 func cleanSegments(segs []string) []string {
 	if len(segs) == 0 {
 		return segs
@@ -599,7 +339,7 @@ func cleanSegments(segs []string) []string {
 		}
 	}
 
-	// Pass 2：去除相邻完全相同的段（DeepSeek 幻觉重复）
+	// Pass 2：去除相邻完全相同的段
 	out := make([]string, 0, len(merged))
 	for i, s := range merged {
 		if i > 0 && s == merged[i-1] {
@@ -923,41 +663,6 @@ func pickFishAPI(apis []string, rr *uint64) string {
 	return apis[idx%uint64(len(apis))]
 }
 
-// localFirstSegment 本地快速截取第一个可合成的语义分片（不超过 maxFirst 个字符），
-// 在 DeepSeek 断句返回前即可发起 TTS 预热，大幅降低首音频延迟。
-func localFirstSegment(text string, maxFirst int) string {
-	text = strings.TrimSpace(text)
-	if maxFirst <= 0 {
-		maxFirst = 80
-	}
-	runes := []rune(text)
-	if len(runes) <= maxFirst {
-		return text
-	}
-	for i := maxFirst; i >= maxFirst/2; i-- {
-		switch runes[i-1] {
-		case '。', '！', '？', '；', '，', '.', '!', '?', ';':
-			return strings.TrimSpace(string(runes[:i]))
-		}
-	}
-	return strings.TrimSpace(string(runes[:maxFirst]))
-}
-
-// remainingTextAfter 返回 text 中 first 之后的剩余文本（按 rune 数截取）。
-func remainingTextAfter(text, first string) string {
-	text = strings.TrimSpace(text)
-	first = strings.TrimSpace(first)
-	if first == "" || first == text {
-		return ""
-	}
-	textRunes := []rune(text)
-	firstRunes := []rune(first)
-	if len(textRunes) <= len(firstRunes) {
-		return ""
-	}
-	return strings.TrimSpace(string(textRunes[len(firstRunes):]))
-}
-
 func main() {
 	cfg := AppConfig{
 		ListenAddr:   envOrDefault("MEMEC_BACKEND_LISTEN", "127.0.0.1:8090"),
@@ -1053,12 +758,11 @@ func main() {
 		}
 		optimizedText, optErr := addBreathByMode(req.Text, req.Mode)
 		if optErr != nil {
-			// DeepSeek 偶发失败时回退原文，避免用户请求直接失败。
-			fmt.Printf("[deepseek] mode=%s fallback=origin reason=%v\n", req.Mode, optErr)
+			fmt.Printf("[tts] addBreathByMode fallback=origin reason=%v\n", optErr)
 			optimizedText = req.Text
 		}
-		if strings.ToLower(strings.TrimSpace(req.Mode)) != "normal" {
-			logLine := fmt.Sprintf("[deepseek] mode=%s optimized_text=\n%s", req.Mode, formatTextForLog(optimizedText))
+		if strings.ToLower(strings.TrimSpace(req.Mode)) == "sleep" {
+			logLine := fmt.Sprintf("[tts] mode=%s optimized_text=\n%s", req.Mode, formatTextForLog(optimizedText))
 			fmt.Println(logLine)
 			appendLineToFile(fishErrLogPath, time.Now().Format("2006-01-02 15:04:05")+" "+logLine)
 		}
@@ -1222,8 +926,7 @@ func main() {
 	})
 
 	// POST /api/tts/multi-segment-stream
-	// DeepSeek 返回断句 JSON 数组后，按段 index 轮流绑定 GPU 合成；响应为 NDJSON（每行一个 JSON），
-	// 首行 type=meta，随后 type=chunk 含 mp3_b64，便于前端边收边解码播放。
+	// 本地分段并插入 Fish 气口标签后，按段 index 轮流绑定 GPU 合成；响应为 NDJSON。
 	r.POST("/api/tts/multi-segment-stream", authRequired, func(c *gin.Context) {
 		var req multiSegmentStreamRequest
 		if err := c.ShouldBindJSON(&req); err != nil {
@@ -1278,104 +981,48 @@ func main() {
 			}
 		}
 		reqCtx := c.Request.Context()
-		isSleep := strings.ToLower(strings.TrimSpace(req.Mode)) == "sleep"
 
-		var segments []string
+		tPrep := time.Now()
+		segs, segErr := segmentTextArrayWithLocalBreath(req.Text)
+		if segErr != nil {
+			fmt.Printf("[segment-local] fallback=single reason=%v\n", segErr)
+			segs = []string{req.Text}
+		}
+		segs = filterNonEmptySegments(segs)
+		if len(segs) == 0 {
+			segs = []string{req.Text}
+		}
+		segments := segs
+		rec.DeepSeekMs = time.Since(tPrep).Milliseconds()
+		rec.OptimizeMs = rec.DeepSeekMs
+
 		var firstPrefetchCh chan ttsResult
 		var firstSegTTSMs int64
-
-		if isSleep {
-			// ── 睡前模式：一次 DeepSeek 调用同时完成气口优化 + 断句 ──
-			// 原来：addBreathByMode（~3s）→ segmentTextArrayWithDeepSeek（~3s）= ~6s，且断句时可能丢弃气口标签
-			// 现在：segmentAndBreatheWithDeepSeek（~4s）= 一次调用，气口全程一致（含后半段）
-			t0 := time.Now()
-			segs, sleepErr := segmentAndBreatheWithDeepSeek(req.Text)
-			rec.OptimizeMs = time.Since(t0).Milliseconds()
-			rec.DeepSeekMs = rec.OptimizeMs
-			if sleepErr != nil {
-				fmt.Printf("[deepseek-sleep] fallback=single reason=%v\n", sleepErr)
-				segs = []string{req.Text}
+		firstPrefetchCh = make(chan ttsResult, 1)
+		tPref := time.Now()
+		seg0Text := segments[0]
+		go func() {
+			prefReq := ttsBase
+			prefReq.Text = seg0Text
+			payload, err := json.Marshal(prefReq)
+			if err != nil {
+				firstPrefetchCh <- ttsResult{err: err}
+				return
 			}
-			segs = filterNonEmptySegments(segs)
-			if len(segs) == 0 {
-				segs = []string{req.Text}
+			api := pickAPIForSegment(0, prefReq, cfg.FishAPIs, refs)
+			q, ok := ttsQueues[api]
+			if !ok {
+				firstPrefetchCh <- ttsResult{err: fmt.Errorf("no queue for prefetch")}
+				return
 			}
-			segments = segs
-			// DeepSeek 返回后立即启动第一段 TTS，与后续各段并行
-			firstPrefetchCh = make(chan ttsResult, 1)
-			tPref := time.Now()
-			seg0Text := segments[0]
-			go func() {
-				prefReq := ttsBase
-				prefReq.Text = seg0Text
-				payload, err := json.Marshal(prefReq)
-				if err != nil {
-					firstPrefetchCh <- ttsResult{err: err}
-					return
-				}
-				api := pickAPIForSegment(0, prefReq, cfg.FishAPIs, refs)
-				q, ok := ttsQueues[api]
-				if !ok {
-					firstPrefetchCh <- ttsResult{err: fmt.Errorf("no queue for prefetch")}
-					return
-				}
-				res, jErr := submitTTSJob(reqCtx, q, payload, false)
-				firstSegTTSMs = time.Since(tPref).Milliseconds()
-				if jErr != nil {
-					firstPrefetchCh <- ttsResult{err: jErr}
-					return
-				}
-				firstPrefetchCh <- res
-			}()
-		} else {
-			// ── 普通模式：本地截取首段（120字）立即预热 TTS，与 DeepSeek 断句剩余文本并行 ──
-			// 首音频延迟 = max(TTS预热时间, DeepSeek时间)，而非两者之和
-			firstSeg := localFirstSegment(req.Text, 120)
-			firstPrefetchCh = make(chan ttsResult, 1)
-			tFirstSeg := time.Now()
-			go func() {
-				prefReq := ttsBase
-				prefReq.Text = firstSeg
-				payload, err := json.Marshal(prefReq)
-				if err != nil {
-					firstPrefetchCh <- ttsResult{err: err}
-					return
-				}
-				api := pickAPIForSegment(0, prefReq, cfg.FishAPIs, refs)
-				q, ok := ttsQueues[api]
-				if !ok {
-					firstPrefetchCh <- ttsResult{err: fmt.Errorf("no queue for prefetch upstream")}
-					return
-				}
-				res, jErr := submitTTSJob(reqCtx, q, payload, false)
-				firstSegTTSMs = time.Since(tFirstSeg).Milliseconds()
-				if jErr != nil {
-					firstPrefetchCh <- ttsResult{err: jErr}
-					return
-				}
-				firstPrefetchCh <- res
-			}()
-
-			remainingText := remainingTextAfter(req.Text, firstSeg)
-			t1 := time.Now()
-			var remainingSegs []string
-			if remainingText != "" {
-				var segErr error
-				remainingSegs, segErr = segmentTextArrayWithDeepSeek(remainingText)
-				if segErr != nil {
-					fmt.Printf("[deepseek-segment] fallback=local reason=%v\n", segErr)
-					remainingSegs = []string{remainingText}
-				}
-				remainingSegs = filterNonEmptySegments(remainingSegs)
+			res, jErr := submitTTSJob(reqCtx, q, payload, false)
+			firstSegTTSMs = time.Since(tPref).Milliseconds()
+			if jErr != nil {
+				firstPrefetchCh <- ttsResult{err: jErr}
+				return
 			}
-			rec.DeepSeekMs = time.Since(t1).Milliseconds()
-
-			segments = append([]string{firstSeg}, remainingSegs...)
-			segments = filterNonEmptySegments(segments)
-			if len(segments) == 0 {
-				segments = []string{req.Text}
-			}
-		}
+			firstPrefetchCh <- res
+		}()
 
 		const maxSegs = 48
 		if len(segments) > maxSegs {
@@ -1426,7 +1073,7 @@ func main() {
 		rec.FirstMetaMs = time.Since(tAll).Milliseconds()
 
 		// 打印全部分片供断句质量审查
-		fmt.Printf("[segments] mode=%s count=%d ds=%dms\n", rec.Mode, len(segments), rec.DeepSeekMs)
+		fmt.Printf("[segments] mode=%s count=%d prep=%dms\n", rec.Mode, len(segments), rec.DeepSeekMs)
 		for si, seg := range segments {
 			fmt.Printf("  [%02d/%02d] len=%d %s\n", si+1, len(segments), len([]rune(seg)), previewText(seg, 80))
 		}

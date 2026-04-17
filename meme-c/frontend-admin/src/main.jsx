@@ -182,8 +182,8 @@ function RecordCard({ rec }) {
           <div className="metric-key">断句完成</div>
         </div>
         <div className="metric">
-          <div className="metric-val">{dsMs ? fmtMs(dsMs) : '—'}</div>
-          <div className="metric-key">DeepSeek</div>
+          <div className="metric-val">{dsMs ? fmtMs(dsMs) : (parseNum(rec.optimize_ms) ? fmtMs(rec.optimize_ms) : '—')}</div>
+          <div className="metric-key">分段准备</div>
         </div>
         <div className="metric">
           <div className="metric-val">{fmtMs(rec.total_ms)}</div>

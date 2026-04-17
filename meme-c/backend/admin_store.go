@@ -24,8 +24,8 @@ type GenerationRecord struct {
 	SegmentCount       int      `json:"segment_count"`
 	FirstMetaMs        int64    `json:"first_meta_ms"`         // 首行 meta 写出耗时
 	FirstAudioMs       int64    `json:"first_audio_ms"`        // 首段可播 MP3 chunk 写出耗时
-	OptimizeMs         int64    `json:"optimize_ms"`           // 文本优化（含睡前 DeepSeek）
-	DeepSeekMs         int64    `json:"deepseek_segment_ms"`   // 断句 DeepSeek
+	OptimizeMs         int64    `json:"optimize_ms"`           // 分段与气口准备耗时（本地）
+	DeepSeekMs         int64    `json:"deepseek_segment_ms"`   // 同上细分；字段名保留兼容前端
 	TtsPerSegmentMs    []int64  `json:"tts_per_segment_ms"`    // 各片 Fish /v1/tts
 	EncodePerSegmentMs []int64  `json:"encode_per_segment_ms"` // 各片 ffmpeg（变速+wav→mp3）
 	TotalMs            int64    `json:"total_ms"`

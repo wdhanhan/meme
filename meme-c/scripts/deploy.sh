@@ -18,7 +18,6 @@ SERVICE_FILE="/etc/systemd/system/${SERVICE_NAME}.service"
 NGINX_SITE="/etc/nginx/sites-available/meme-c.conf"
 NGINX_SITE_ENABLED="/etc/nginx/sites-enabled/meme-c.conf"
 FISH_BASE_PORT="${FISH_BASE_PORT:-8080}"
-GPU_COUNT="${FISH_GPU_COUNT:-}"
 # 逗号分隔的 Fish 根地址，例如 http://8.215.100.152:8080,http://8.215.100.152:8081
 # 若已设置则优先生效，不再按本机 GPU 或远程主机推导。
 FISH_API_BASES="${FISH_API_BASES:-}"
@@ -26,40 +25,11 @@ FISH_API_BASES="${FISH_API_BASES:-}"
 FISH_REMOTE_HOST="${FISH_REMOTE_HOST:-${MEMEC_FISH_REMOTE_HOST:-}}"
 POSTGRES_DSN="${MEMEC_POSTGRES_DSN:-postgres://memec:memec@127.0.0.1:5432/memec?sslmode=disable}"
 
-if [[ -z "${GPU_COUNT}" ]]; then
-  if command -v nvidia-smi >/dev/null 2>&1; then
-    GPU_COUNT="$(nvidia-smi -L | wc -l | tr -d ' ')"
-  else
-    GPU_COUNT=1
-  fi
-fi
-
-if [[ -z "${GPU_COUNT}" || "${GPU_COUNT}" -lt 1 ]]; then
-  GPU_COUNT=1
-fi
-
-if [[ -z "${FISH_API_BASES}" ]]; then
-  FISH_API_BASES=""
-  if [[ -n "${FISH_REMOTE_HOST}" ]]; then
-    for ((GPU_ID=0; GPU_ID<GPU_COUNT; GPU_ID++)); do
-      PORT=$((FISH_BASE_PORT + GPU_ID))
-      if [[ -z "${FISH_API_BASES}" ]]; then
-        FISH_API_BASES="http://${FISH_REMOTE_HOST}:${PORT}"
-      else
-        FISH_API_BASES="${FISH_API_BASES},http://${FISH_REMOTE_HOST}:${PORT}"
-      fi
-    done
-  else
-    for ((GPU_ID=0; GPU_ID<GPU_COUNT; GPU_ID++)); do
-      PORT=$((FISH_BASE_PORT + GPU_ID))
-      if [[ -z "${FISH_API_BASES}" ]]; then
-        FISH_API_BASES="http://127.0.0.1:${PORT}"
-      else
-        FISH_API_BASES="${FISH_API_BASES},http://127.0.0.1:${PORT}"
-      fi
-    done
-  fi
-fi
+# Fish 多地址：与 scripts/fish-upstreams.inc.sh / sync-fish-upstreams.sh 共用逻辑
+# shellcheck source=fish-upstreams.inc.sh
+source "${SCRIPT_DIR}/fish-upstreams.inc.sh"
+fish_compute_fish_api_bases
+fish_write_upstreams_env "${ROOT_DIR}"
 
 # JWT：按要求与后端服务同处部署脚本，直接写死在 systemd Environment 中
 MEMEC_JWT_SECRET="${MEMEC_JWT_SECRET:-memec-fixed-jwt-secret-2026}"
@@ -154,7 +124,7 @@ User=root
 WorkingDirectory=${BACKEND_DIR}
 Environment=MEMEC_BACKEND_LISTEN=127.0.0.1:8090
 Environment=MEMEC_DATA_DIR=${ROOT_DIR}/data
-Environment=FISH_API_BASES=${FISH_API_BASES}
+EnvironmentFile=-${ROOT_DIR}/.runtime/fish-upstreams.env
 Environment=MEMEC_POSTGRES_DSN=${POSTGRES_DSN}
 Environment=MEMEC_JWT_SECRET=${MEMEC_JWT_SECRET}
 Environment=TTS_QUEUE_SIZE=64
