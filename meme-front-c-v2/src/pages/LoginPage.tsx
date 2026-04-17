@@ -192,34 +192,6 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
               </p>
             </div>
 
-            {/* 登录方式切换（仅登录模式） */}
-            {authMode === 'login' && (
-              <div className="flex p-1 bg-surface-container-high rounded-full self-start gap-0.5">
-                <button
-                  type="button"
-                  onClick={() => { setLoginMethod('sms'); setStatus(''); }}
-                  className={`px-5 py-1.5 rounded-full text-xs font-headline transition-colors ${
-                    loginMethod === 'sms'
-                      ? 'font-bold bg-white text-primary shadow-sm'
-                      : 'font-medium text-outline hover:text-primary'
-                  }`}
-                >
-                  短信验证码
-                </button>
-                <button
-                  type="button"
-                  onClick={() => { setLoginMethod('password'); setStatus(''); }}
-                  className={`px-5 py-1.5 rounded-full text-xs font-headline transition-colors ${
-                    loginMethod === 'password'
-                      ? 'font-bold bg-white text-primary shadow-sm'
-                      : 'font-medium text-outline hover:text-primary'
-                  }`}
-                >
-                  密码登录
-                </button>
-              </div>
-            )}
-
             <form
               className="space-y-4"
               onSubmit={authMode === 'login' && loginMethod === 'password' ? submitByPassword : submitBySMS}
@@ -312,6 +284,17 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
                 </button>
               </div>
               {status && <p className="text-xs text-secondary px-3">{status}</p>}
+              {authMode === 'login' && (
+                <p className="text-xs text-center text-secondary/50 pt-1">
+                  <button
+                    type="button"
+                    onClick={() => { setLoginMethod(loginMethod === 'sms' ? 'password' : 'sms'); setStatus(''); }}
+                    className="text-primary/70 hover:text-primary underline-offset-2 hover:underline transition-colors"
+                  >
+                    {loginMethod === 'sms' ? '改用密码登录' : '改用验证码登录'}
+                  </button>
+                </p>
+              )}
             </form>
 
             <div className="relative flex py-2 items-center">
