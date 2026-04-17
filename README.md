@@ -90,3 +90,8 @@ Frontend PID/logs are stored in:
 
 A root `.gitignore` is included to avoid committing dependencies/build/runtime artifacts.
 You can initialize and commit from this root directory.
+
+
+JWT secret 已加载，refs 索引也已自动同步。之前的问题是手动     
+  nohup 启动时没有加载 .runtime/memec-jwt.env，以后用 systemctl restart 
+  meme-c-backend 重启即可。    

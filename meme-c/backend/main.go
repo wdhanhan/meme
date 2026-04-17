@@ -969,6 +969,31 @@ func main() {
 	defer workerCancel()
 	startTTSWorkers(workerCtx, cfg.FishAPIs, client, ttsQueues)
 
+	// 启动时异步刷新 refs 索引，使重启后能正确路由带 reference_id 的请求
+	go func() {
+		for _, fishAPI := range cfg.FishAPIs {
+			upstreamURL := fmt.Sprintf("%s/v1/references/list?format=json", fishAPI)
+			resp, err := client.Get(upstreamURL)
+			if err != nil {
+				fmt.Printf("[refs-init] failed to fetch %s: %v\n", fishAPI, err)
+				continue
+			}
+			body, err := io.ReadAll(resp.Body)
+			resp.Body.Close()
+			if err != nil || resp.StatusCode >= 400 {
+				fmt.Printf("[refs-init] bad response from %s: status=%d\n", fishAPI, resp.StatusCode)
+				continue
+			}
+			refIDs, err := parseReferenceIDsFromBody(body)
+			if err != nil {
+				fmt.Printf("[refs-init] parse error from %s: %v\n", fishAPI, err)
+				continue
+			}
+			refs.setAPIReferences(fishAPI, refIDs)
+			fmt.Printf("[refs-init] loaded %d references from %s\n", len(refIDs), fishAPI)
+		}
+	}()
+
 	loadGenerationsFromDisk()
 
 	r := gin.Default()
@@ -985,6 +1010,7 @@ func main() {
 	registerAuthRoutes(r, db)
 	initWorkshopWorker(workerCtx, db, cfg, refs, ttsQueues)
 	registerWorkshopRoutes(r, db)
+	registerVoiceRoutes(r, db, cfg, refs)
 
 	r.GET("/api/health", func(c *gin.Context) {
 		totalQueueLen := 0
@@ -1057,28 +1083,9 @@ func main() {
 			return
 		}
 
-		fallbackUsed := false
 		if result.err != nil {
 			c.JSON(http.StatusBadGateway, gin.H{"error": "upstream unavailable", "detail": result.err.Error()})
 			return
-		}
-		if result.statusCode >= 500 && strings.TrimSpace(req.ReferenceID) != "" {
-			// 指定音色失败时自动降级：去掉 reference_id 再试一次，避免直接 500。
-			reqNoRef := req
-			reqNoRef.ReferenceID = ""
-			payloadNoRef, err := json.Marshal(reqNoRef)
-			if err == nil {
-				fallbackAPI := chooseAPIForTTS(reqNoRef, cfg.FishAPIs, ttsQueues, refs, &fishAPIRR)
-				if fallbackQueue, ok := ttsQueues[fallbackAPI]; ok {
-					if fallbackResult, fbErr := submitTTSJob(c.Request.Context(), fallbackQueue, payloadNoRef, wantsM4A); fbErr == nil {
-						if fallbackResult.err == nil && fallbackResult.statusCode < 400 {
-							result = fallbackResult
-							fallbackUsed = true
-							c.Header("X-Reference-Fallback", "1")
-						}
-					}
-				}
-			}
 		}
 		if result.statusCode >= 400 {
 			c.Data(result.statusCode, "application/json", result.body)
@@ -1111,8 +1118,8 @@ func main() {
 		}
 
 		fmt.Printf(
-			"[tts-route] upstream=%s fallback=%t reference_id=%q status=%d bytes=%d\n",
-			result.fishAPI, fallbackUsed, req.ReferenceID, result.statusCode, len(outBytes),
+			"[tts-route] upstream=%s reference_id=%q status=%d bytes=%d\n",
+			result.fishAPI, req.ReferenceID, result.statusCode, len(outBytes),
 		)
 		c.Header("X-Fish-Upstream", result.fishAPI)
 		c.Header("Content-Disposition", "attachment; filename=tts."+outExt)
@@ -1304,18 +1311,6 @@ func main() {
 					firstPrefetchCh <- ttsResult{err: jErr}
 					return
 				}
-				if res.statusCode >= 500 && strings.TrimSpace(prefReq.ReferenceID) != "" {
-					noRefReq := prefReq
-					noRefReq.ReferenceID = ""
-					if p2, mErr := json.Marshal(noRefReq); mErr == nil {
-						fbAPI := chooseAPIForTTS(noRefReq, cfg.FishAPIs, ttsQueues, refs, new(uint64))
-						if fq, ok2 := ttsQueues[fbAPI]; ok2 {
-							if r2, e2 := submitTTSJob(reqCtx, fq, p2, false); e2 == nil && r2.err == nil && r2.statusCode < 400 {
-								res = r2
-							}
-						}
-					}
-				}
 				firstPrefetchCh <- res
 			}()
 
@@ -1434,19 +1429,6 @@ func main() {
 					}
 					return
 				}
-				if res.statusCode >= 500 && strings.TrimSpace(segReq.ReferenceID) != "" {
-					segNoRef := segReq
-					segNoRef.ReferenceID = ""
-					payloadNoRef, mErr := json.Marshal(segNoRef)
-					if mErr == nil {
-						fbAPI := chooseAPIForTTS(segNoRef, cfg.FishAPIs, ttsQueues, refs, &fishAPIRR)
-						if fq, ok2 := ttsQueues[fbAPI]; ok2 {
-							if res2, e2 := submitTTSJob(reqCtx, fq, payloadNoRef, false); e2 == nil && res2.err == nil && res2.statusCode < 400 {
-								res = res2
-							}
-						}
-					}
-				}
 				ttsMs[i] = time.Since(tSeg).Milliseconds()
 				select {
 				case ready[i] <- res:
@@ -1464,6 +1446,21 @@ func main() {
 				_ = writeNDJSONLine(map[string]any{"type": "error", "index": i, "message": "client disconnected"})
 				return
 			case res = <-ready[i]:
+			}
+			// 首段预热路径此前缺少 reference_id 失败降级：当上游 500 时自动去掉 reference_id 再试一次，
+			// 避免单段文本在首段直接失败，导致整条多段流式中断。
+			if i == 0 && res.statusCode >= 500 && strings.TrimSpace(ttsBase.ReferenceID) != "" {
+				segNoRef := ttsBase
+				segNoRef.Text = segments[0]
+				segNoRef.ReferenceID = ""
+				if payloadNoRef, mErr := json.Marshal(segNoRef); mErr == nil {
+					fbAPI := chooseAPIForTTS(segNoRef, cfg.FishAPIs, ttsQueues, refs, &fishAPIRR)
+					if fq, ok2 := ttsQueues[fbAPI]; ok2 {
+						if res2, e2 := submitTTSJob(reqCtx, fq, payloadNoRef, false); e2 == nil && res2.err == nil && res2.statusCode < 400 {
+							res = res2
+						}
+					}
+				}
 			}
 			// segment 0 的 TTS 耗时由预热 goroutine 记录
 			if i == 0 {

@@ -48,6 +48,18 @@ CREATE TABLE IF NOT EXISTS workshop_jobs (
 );
 `,
 		`CREATE INDEX IF NOT EXISTS idx_workshop_jobs_user_created ON workshop_jobs (user_id, created_at DESC);`,
+		`
+CREATE TABLE IF NOT EXISTS user_voices (
+  id           BIGSERIAL PRIMARY KEY,
+  user_id      BIGINT NOT NULL,
+  name         TEXT NOT NULL DEFAULT '',
+  reference_id TEXT NOT NULL,
+  status       TEXT NOT NULL DEFAULT 'ready',
+  created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_user_voices_user_ref ON user_voices (user_id, reference_id);`,
+		`CREATE INDEX IF NOT EXISTS idx_user_voices_user_created ON user_voices (user_id, created_at DESC);`,
 	}
 
 	for _, stmt := range stmts {

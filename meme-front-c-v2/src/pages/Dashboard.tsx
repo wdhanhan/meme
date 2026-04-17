@@ -1,4 +1,4 @@
-import React, { useRef, useState, useTransition } from 'react';
+import React, { useRef, useState, useTransition, useEffect, useCallback } from 'react';
 import { motion } from 'motion/react';
 import {
   Star, CloudRain, Settings, CheckCircle2, Mic2, Headphones,
@@ -14,7 +14,7 @@ import PlayerBar from '../components/PlayerBar';
 import PricingCard from '../components/PricingCard';
 import TtsWorkshopPanel from '../components/TtsWorkshopPanel';
 import WorkshopPanel from '../components/WorkshopPanel';
-import { VOICES, STORIES, PRICING_PLANS } from '../constants';
+import { STORIES, PRICING_PLANS } from '../constants';
 import type { Page, TtsPlayerBarState, Voice } from '../types';
 
 // ─────────────────────────────────────────────────────────
@@ -281,20 +281,21 @@ function VoiceAuditionPanel({ voices, onPlayerChange }: VoiceAuditionPanelProps)
 // ─────────────────────────────────────────────────────────
 interface VoiceClonePanelProps {
   voices: Voice[];
-  onVoiceAdded: (v: Voice) => void;
+  loadingVoices: boolean;
+  onRefresh: () => void;
 }
 
-function VoiceClonePanel({ voices, onVoiceAdded }: VoiceClonePanelProps) {
+function VoiceClonePanel({ voices, loadingVoices, onRefresh }: VoiceClonePanelProps) {
   const [file, setFile] = useState<File | null>(null);
   const [duration, setDuration] = useState<number | null>(null);
-  const [refId, setRefId] = useState('');
   const [name, setName] = useState('');
   const [status, setStatus] = useState('点击上传区域，选择 10-20 秒音频样本');
   const [kind, setKind] = useState<'idle' | 'loading' | 'ok' | 'err'>('idle');
   const [uploading, setUploading] = useState(false);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
 
-  function authHeaders() {
+  function authHeaders(): Record<string, string> {
     const t = localStorage.getItem('memec_auth_token') || '';
     return t ? { Authorization: `Bearer ${t}` } : {};
   }
@@ -327,22 +328,35 @@ function VoiceClonePanel({ voices, onVoiceAdded }: VoiceClonePanelProps) {
 
   async function handleUpload() {
     if (!file) { setKind('err'); setStatus('请先选择音频文件'); return; }
-    if (!refId.trim()) { setKind('err'); setStatus('请填写音色 ID'); return; }
-    setUploading(true); setKind('loading'); setStatus('上传中…');
+    setUploading(true); setKind('loading'); setStatus('上传中，请稍候…');
     try {
       const form = new FormData();
-      form.append('id', refId.trim());
-      form.append('text', 'sample');
+      if (name.trim()) form.append('name', name.trim());
       form.append('audio', file);
-      const resp = await fetch('/api/references/add', { method: 'POST', headers: authHeaders(), body: form });
-      if (!resp.ok) throw new Error(`HTTP ${resp.status}: ${await resp.text()}`);
-      const nv: Voice = { id: `local-${Date.now()}`, name: name.trim() || refId.trim(), avatarUrl: '', status: 'processing', referenceId: refId.trim() };
-      onVoiceAdded(nv);
-      setKind('ok'); setStatus(`上传成功！音色「${nv.name}」已添加到试音工坊。`);
-      setFile(null); setDuration(null); setRefId(''); setName('');
+      const resp = await fetch('/api/voices', { method: 'POST', headers: authHeaders(), body: form });
+      const data = await resp.json().catch(() => ({}));
+      if (!resp.ok) throw new Error(data.error || data.detail || `HTTP ${resp.status}`);
+      setKind('ok'); setStatus(`音色「${data.name}」创建成功，已同步到试音工坊！`);
+      setFile(null); setDuration(null); setName('');
+      onRefresh();
     } catch (e) {
       setKind('err'); setStatus(`上传失败：${e instanceof Error ? e.message : String(e)}`);
     } finally { setUploading(false); }
+  }
+
+  async function handleDelete(v: Voice) {
+    if (!confirm(`确定删除音色「${v.name}」？`)) return;
+    setDeletingId(v.id);
+    try {
+      const resp = await fetch(`/api/voices/${v.id}`, { method: 'DELETE', headers: authHeaders() });
+      if (!resp.ok) {
+        const d = await resp.json().catch(() => ({}));
+        throw new Error(d.error || `HTTP ${resp.status}`);
+      }
+      onRefresh();
+    } catch (e) {
+      alert(`删除失败：${e instanceof Error ? e.message : String(e)}`);
+    } finally { setDeletingId(null); }
   }
 
   const StatusIcon = kind === 'err' ? AlertCircle : kind === 'ok' ? CheckCircle2 : kind === 'loading' ? Loader2 : null;
@@ -388,17 +402,10 @@ function VoiceClonePanel({ voices, onVoiceAdded }: VoiceClonePanelProps) {
         <input ref={inputRef} type="file" accept="audio/*" className="hidden"
           onChange={(e) => { void handlePick(e.target.files?.[0] || null); e.currentTarget.value = ''; }} />
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          <div>
-            <label className="block text-xs font-bold text-secondary mb-1.5 ml-1">音色 ID <span className="text-red-400">*</span></label>
-            <input type="text" value={refId} onChange={(e) => setRefId(e.target.value)} placeholder="如 grandma_001"
-              className="w-full px-4 py-2.5 rounded-full bg-white/70 border border-white/60 text-sm text-on-surface placeholder:text-outline/50 focus:ring-2 focus:ring-primary-container outline-hidden" />
-          </div>
-          <div>
-            <label className="block text-xs font-bold text-secondary mb-1.5 ml-1">显示名称（可选）</label>
-            <input type="text" value={name} onChange={(e) => setName(e.target.value)} placeholder="如 奶奶的声音"
-              className="w-full px-4 py-2.5 rounded-full bg-white/70 border border-white/60 text-sm text-on-surface placeholder:text-outline/50 focus:ring-2 focus:ring-primary-container outline-hidden" />
-          </div>
+        <div>
+          <label className="block text-xs font-bold text-secondary mb-1.5 ml-1">声音名称（可选）</label>
+          <input type="text" value={name} onChange={(e) => setName(e.target.value)} placeholder="如 奶奶的声音"
+            className="w-full px-4 py-2.5 rounded-full bg-white/70 border border-white/60 text-sm text-on-surface placeholder:text-outline/50 focus:ring-2 focus:ring-primary-container outline-hidden" />
         </div>
 
         <button type="button" onClick={() => void handleUpload()} disabled={uploading || !file}
@@ -414,25 +421,40 @@ function VoiceClonePanel({ voices, onVoiceAdded }: VoiceClonePanelProps) {
 
       {/* 已有音色 */}
       <section className="space-y-4">
-        <h3 className="text-base font-bold text-primary">已有音色</h3>
-        <div className="flex flex-wrap gap-3">
-          {voices.map((v) => (
-            <div key={v.id} className="flex items-center gap-3 px-4 py-2.5 glass-card rounded-full border border-white/60">
-              {v.avatarUrl ? (
-                <img src={v.avatarUrl} alt={v.name} className="w-8 h-8 rounded-full object-cover border border-white shadow-sm" />
-              ) : (
-                <div className="w-8 h-8 rounded-full bg-primary/15 flex items-center justify-center text-primary text-sm font-bold">{v.name[0]}</div>
-              )}
-              <div>
-                <p className="text-sm font-semibold text-on-surface leading-none">{v.name}</p>
-                <p className="text-[10px] text-secondary/60 mt-0.5">{v.referenceId}</p>
-              </div>
-              <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold ${v.status === 'ready' ? 'bg-emerald-100 text-emerald-700' : 'bg-yellow-100 text-yellow-700'}`}>
-                {v.status === 'ready' ? '就绪' : '处理中'}
-              </span>
-            </div>
-          ))}
+        <div className="flex items-center justify-between">
+          <h3 className="text-base font-bold text-primary">已复刻的音色</h3>
+          {loadingVoices && <Loader2 className="w-4 h-4 text-primary animate-spin" />}
         </div>
+        {!loadingVoices && voices.length === 0 ? (
+          <p className="text-sm text-secondary/50 text-center py-6">还没有复刻的音色，上传音频开始体验吧</p>
+        ) : (
+          <div className="space-y-2">
+            {voices.map((v) => (
+              <div key={v.id} className="flex items-center gap-3 px-4 py-3 glass-card rounded-2xl border border-white/60">
+                <div className="w-9 h-9 rounded-full bg-primary/15 flex items-center justify-center text-primary text-sm font-bold shrink-0">
+                  {v.name[0]}
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-semibold text-on-surface leading-none">{v.name}</p>
+                  <p className="text-[10px] text-secondary/50 mt-0.5 truncate">{v.referenceId}</p>
+                </div>
+                <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold shrink-0 ${v.status === 'ready' ? 'bg-emerald-100 text-emerald-700' : 'bg-yellow-100 text-yellow-700'}`}>
+                  {v.status === 'ready' ? '就绪' : '处理中'}
+                </span>
+                <button
+                  onClick={() => void handleDelete(v)}
+                  disabled={deletingId === v.id}
+                  className="shrink-0 w-7 h-7 rounded-full flex items-center justify-center text-secondary/40 hover:bg-red-50 hover:text-red-500 transition-colors disabled:opacity-40"
+                  title="删除音色"
+                >
+                  {deletingId === v.id
+                    ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    : <AlertCircle className="w-3.5 h-3.5" />}
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
       </section>
     </div>
   );
@@ -814,9 +836,33 @@ export default function Dashboard({ onNavigate }: DashboardProps) {
   const [activeCategory, setActiveCategory] = useState('stories');
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [isPending, startTransition] = useTransition();
-  const [voices, setVoices] = useState<Voice[]>([...VOICES]);
-  const [selectedVoiceId, setSelectedVoiceId] = useState<string>(VOICES[0]?.referenceId ?? '');
+  const [voices, setVoices] = useState<Voice[]>([]);
+  const [loadingVoices, setLoadingVoices] = useState(true);
+  const [selectedVoiceId, setSelectedVoiceId] = useState<string>('');
   const [ttsPlayer, setTtsPlayer] = useState<TtsPlayerBarState | null>(null);
+
+  const fetchVoices = useCallback(async () => {
+    setLoadingVoices(true);
+    try {
+      const token = localStorage.getItem('memec_auth_token') || '';
+      const resp = await fetch('/api/voices', { headers: token ? { Authorization: `Bearer ${token}` } : {} });
+      if (!resp.ok) return;
+      const data = await resp.json();
+      const loaded: Voice[] = (data.voices ?? []).map((v: { id: number; name: string; reference_id: string; status: string }) => ({
+        id: String(v.id),
+        name: v.name,
+        avatarUrl: '',
+        status: v.status as 'ready' | 'processing',
+        referenceId: v.reference_id,
+      }));
+      setVoices(loaded);
+      setSelectedVoiceId((prev) => prev || loaded[0]?.referenceId || '');
+    } finally {
+      setLoadingVoices(false);
+    }
+  }, []);
+
+  useEffect(() => { void fetchVoices(); }, [fetchVoices]);
 
   function renderPanel() {
     switch (activeCategory) {
@@ -854,7 +900,7 @@ export default function Dashboard({ onNavigate }: DashboardProps) {
       case 'workshop':
         return <WorkshopPanel voices={voices} />;
       case 'voice-clone':
-        return <VoiceClonePanel voices={voices} onVoiceAdded={(v) => setVoices((prev) => [...prev, v])} />;
+        return <VoiceClonePanel voices={voices} loadingVoices={loadingVoices} onRefresh={() => void fetchVoices()} />;
       case 'pricing':
         return <PricingPanel />;
       case 'settings':
