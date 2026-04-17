@@ -983,6 +983,8 @@ func main() {
 		panic(err)
 	}
 	registerAuthRoutes(r, db)
+	initWorkshopWorker(workerCtx, db, cfg, refs, ttsQueues)
+	registerWorkshopRoutes(r, db)
 
 	r.GET("/api/health", func(c *gin.Context) {
 		totalQueueLen := 0

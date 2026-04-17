@@ -27,6 +27,27 @@ CREATE TABLE IF NOT EXISTS user_sms_codes (
 `,
 		`CREATE INDEX IF NOT EXISTS idx_user_sms_codes_phone_created_at ON user_sms_codes (phone, created_at DESC);`,
 		`ALTER TABLE users ADD COLUMN IF NOT EXISTS password_hash TEXT;`,
+		`
+CREATE TABLE IF NOT EXISTS workshop_jobs (
+  id            BIGSERIAL PRIMARY KEY,
+  user_id       BIGINT NOT NULL,
+  title         TEXT NOT NULL DEFAULT '',
+  text_content  TEXT NOT NULL,
+  reference_id  TEXT NOT NULL DEFAULT '',
+  mode          TEXT NOT NULL DEFAULT 'normal',
+  speed         FLOAT8 NOT NULL DEFAULT 1.0,
+  status        TEXT NOT NULL DEFAULT 'pending',
+  error_msg     TEXT,
+  audio_path    TEXT,
+  segment_count INT NOT NULL DEFAULT 0,
+  segments_done INT NOT NULL DEFAULT 0,
+  favorite      BOOLEAN NOT NULL DEFAULT FALSE,
+  disliked      BOOLEAN NOT NULL DEFAULT FALSE,
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+`,
+		`CREATE INDEX IF NOT EXISTS idx_workshop_jobs_user_created ON workshop_jobs (user_id, created_at DESC);`,
 	}
 
 	for _, stmt := range stmts {

@@ -13,6 +13,7 @@ import StoryCard from '../components/StoryCard';
 import PlayerBar from '../components/PlayerBar';
 import PricingCard from '../components/PricingCard';
 import TtsWorkshopPanel from '../components/TtsWorkshopPanel';
+import WorkshopPanel from '../components/WorkshopPanel';
 import { VOICES, STORIES, PRICING_PLANS } from '../constants';
 import type { Page, TtsPlayerBarState, Voice } from '../types';
 
@@ -850,6 +851,8 @@ export default function Dashboard({ onNavigate }: DashboardProps) {
         );
       case 'voice-audition':
         return <VoiceAuditionPanel voices={voices} onPlayerChange={setTtsPlayer} />;
+      case 'workshop':
+        return <WorkshopPanel voices={voices} />;
       case 'voice-clone':
         return <VoiceClonePanel voices={voices} onVoiceAdded={(v) => setVoices((prev) => [...prev, v])} />;
       case 'pricing':

@@ -379,6 +379,22 @@ func issueJWTToken(userID int64, phone string) (string, error) {
 	return t.SignedString([]byte(secret))
 }
 
+// getUserClaims returns the JWT MapClaims stored in the Gin context by the auth middleware.
+func getUserClaims(c *gin.Context) jwt.MapClaims {
+	claims, _ := c.Get("auth_claims")
+	m, _ := claims.(jwt.MapClaims)
+	return m
+}
+
+// getUID extracts the numeric user ID from JWT claims.
+func getUID(claims jwt.MapClaims) int64 {
+	if claims == nil {
+		return 0
+	}
+	uid, _ := claims["uid"].(float64)
+	return int64(uid)
+}
+
 func sendSMSCodeViaAliyun(phone, code string) error {
 	accessKeyID := strings.TrimSpace(envOrDefault("ALIYUN_SMS_ACCESS_KEY_ID", ""))
 	accessKeySecret := strings.TrimSpace(envOrDefault("ALIYUN_SMS_ACCESS_KEY_SECRET", ""))

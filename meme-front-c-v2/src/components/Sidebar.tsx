@@ -2,7 +2,7 @@ import { X } from 'lucide-react';
 import type { ElementType } from 'react';
 import {
   Radio, BookOpen, Castle, GraduationCap,
-  Headphones, Mic2, Crown, Settings, HelpCircle,
+  Headphones, Mic2, Layers, Crown, Settings, HelpCircle,
 } from 'lucide-react';
 
 interface SidebarProps {
@@ -21,6 +21,7 @@ const mainNav = [
 
 const featureNav = [
   { id: 'voice-audition', icon: Headphones, label: '试音工坊' },
+  { id: 'workshop',       icon: Layers,     label: '批量工坊' },
   { id: 'voice-clone',    icon: Mic2,       label: '声音复刻' },
 ];
 
