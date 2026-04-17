@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import signal
 import subprocess
 import sys
 from pathlib import Path
@@ -25,6 +26,30 @@ from pathlib import Path
 def run(cmd: list[str], cwd: Path | None = None, env: dict[str, str] | None = None) -> None:
     print(f"[RUN] {' '.join(cmd)}")
     subprocess.run(cmd, cwd=str(cwd) if cwd else None, env=env, check=True)
+
+
+def detect_gpu_count() -> int:
+    """Match bash: nvidia-smi -L | wc -l"""
+    try:
+        r = subprocess.run(
+            ["nvidia-smi", "-L"],
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+    except FileNotFoundError:
+        return 0
+    if r.returncode != 0:
+        return 0
+    return len([ln for ln in r.stdout.splitlines() if ln.strip()])
+
+
+def parse_listen_host_port(listen: str) -> tuple[str, int]:
+    """Parse host:port (IPv4 / simple hostnames)."""
+    if ":" not in listen:
+        raise ValueError(f"invalid --listen (need host:port): {listen!r}")
+    host, port_s = listen.rsplit(":", 1)
+    return host, int(port_s)
 
 
 def parse_args() -> argparse.Namespace:
@@ -53,7 +78,19 @@ def parse_args() -> argparse.Namespace:
         "--listen",
         type=str,
         default="0.0.0.0:8080",
-        help="Server listen address",
+        help="Server listen address (multi-GPU: base port, e.g. 8080 -> 8080,8081,...)",
+    )
+    parser.add_argument(
+        "--multi-gpu",
+        action="store_true",
+        help="Start one model process per GPU (CUDA_VISIBLE_DEVICES + port per card)",
+    )
+    parser.add_argument(
+        "--max-gpus",
+        type=int,
+        default=0,
+        metavar="N",
+        help="With --multi-gpu: use at most N GPUs (0 = all detected)",
     )
     parser.add_argument(
         "--skip-install",
@@ -108,6 +145,78 @@ def ensure_checkpoints_link(repo_dir: Path, model_dir: Path) -> Path:
     return target
 
 
+def build_server_cmd(py: Path, ckpt_dir: Path, listen: str, *, production_flags: bool) -> list[str]:
+    cmd = [
+        str(py),
+        "tools/api_server.py",
+        "--llama-checkpoint-path",
+        str(ckpt_dir),
+        "--decoder-checkpoint-path",
+        str(ckpt_dir / "codec.pth"),
+        "--listen",
+        listen,
+    ]
+    if production_flags:
+        cmd.extend(["--device", "cuda", "--compile", "--workers", "1"])
+    return cmd
+
+
+def run_multi_gpu(
+    py: Path,
+    repo_dir: Path,
+    ckpt_dir: Path,
+    base_listen: str,
+    gpu_count: int,
+) -> int:
+    host, base_port = parse_listen_host_port(base_listen)
+    procs: list[subprocess.Popen[bytes]] = []
+
+    def terminate_all() -> None:
+        for p in procs:
+            if p.poll() is None:
+                p.terminate()
+
+    def handle_signal(signum: int, frame: object | None) -> None:  # noqa: ARG001
+        terminate_all()
+        sys.exit(128 + signum if signum > 0 else 0)
+
+    signal.signal(signal.SIGINT, handle_signal)
+    signal.signal(signal.SIGTERM, handle_signal)
+
+    for i in range(gpu_count):
+        env = os.environ.copy()
+        env.setdefault("PYTHONUNBUFFERED", "1")
+        env["CUDA_VISIBLE_DEVICES"] = str(i)
+        listen = f"{host}:{base_port + i}"
+        cmd = build_server_cmd(py, ckpt_dir, listen, production_flags=True)
+        print(f"[INFO] GPU {i}: CUDA_VISIBLE_DEVICES={i} -> {listen}")
+        print(f"[RUN] {' '.join(cmd)}")
+        procs.append(
+            subprocess.Popen(
+                cmd,
+                cwd=str(repo_dir),
+                env=env,
+            )
+        )
+
+    while True:
+        try:
+            pid, status = os.waitpid(-1, 0)
+        except ChildProcessError:
+            break
+        if os.WIFEXITED(status):
+            rc = os.WEXITSTATUS(status)
+        elif os.WIFSIGNALED(status):
+            rc = 128 + os.WTERMSIG(status)
+        else:
+            rc = 1
+        if rc != 0:
+            print(f"[ERROR] child pid={pid} exited with {rc}", file=sys.stderr)
+            terminate_all()
+            return rc if rc < 256 else 1
+    return 0
+
+
 def main() -> int:
     args = parse_args()
 
@@ -120,22 +229,24 @@ def main() -> int:
 
     ckpt_dir = ensure_checkpoints_link(repo_dir, args.model_dir)
 
+    print(f"[INFO] repo: {repo_dir}")
+    print(f"[INFO] model: {ckpt_dir}")
+
+    if args.multi_gpu:
+        n = detect_gpu_count()
+        if n < 1:
+            print("[ERROR] No NVIDIA GPU detected (nvidia-smi -L).", file=sys.stderr)
+            return 1
+        if args.max_gpus and args.max_gpus > 0:
+            n = min(n, args.max_gpus)
+        print(f"[INFO] starting {n} server process(es) (one model per GPU)")
+        return run_multi_gpu(py, repo_dir, ckpt_dir, args.listen, n)
+
     env = os.environ.copy()
     env.setdefault("PYTHONUNBUFFERED", "1")
 
-    cmd = [
-        str(py),
-        "tools/api_server.py",
-        "--llama-checkpoint-path",
-        str(ckpt_dir),
-        "--decoder-checkpoint-path",
-        str(ckpt_dir / "codec.pth"),
-        "--listen",
-        args.listen,
-    ]
+    cmd = build_server_cmd(py, ckpt_dir, args.listen, production_flags=False)
 
-    print(f"[INFO] repo: {repo_dir}")
-    print(f"[INFO] model: {ckpt_dir}")
     print(f"[INFO] starting server at: {args.listen}")
     run(cmd, cwd=repo_dir, env=env)
     return 0

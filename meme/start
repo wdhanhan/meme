@@ -21,10 +21,9 @@ if [[ -z "${GPU_COUNT}" || "${GPU_COUNT}" -lt 1 ]]; then
   exit 1
 fi
 
-if [[ ! -f "/etc/systemd/system/${SERVICE_PREFIX}0.service" ]]; then
-  echo "[INFO] Installing systemd service..."
-  "${SCRIPT_DIR}/setup_fish_s2_service.sh"
-fi
+# 每次启动都按当前 GPU 数量同步 unit 文件（增卡/减卡后也会对齐实例数）
+echo "[INFO] Syncing systemd units for ${GPU_COUNT} GPU(s)..."
+"${SCRIPT_DIR}/setup_fish_s2_service.sh"
 
 SERVICE_NAMES=()
 for ((GPU_ID=0; GPU_ID<GPU_COUNT; GPU_ID++)); do
