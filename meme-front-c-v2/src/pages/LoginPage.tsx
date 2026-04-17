@@ -1,4 +1,4 @@
-import { FormEvent, useState } from 'react';
+import { FormEvent, useState, useEffect, useRef } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import { Smartphone, Lock, Eye, EyeOff, Sparkles, MessageCircle, User, Fingerprint } from 'lucide-react';
 
@@ -16,6 +16,14 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
   const [sendingCode, setSendingCode] = useState(false);
   const [loggingIn, setLoggingIn] = useState(false);
   const [status, setStatus] = useState('');
+  const statusTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    if (!status) return;
+    if (statusTimerRef.current) clearTimeout(statusTimerRef.current);
+    statusTimerRef.current = setTimeout(() => setStatus(''), 5000);
+    return () => { if (statusTimerRef.current) clearTimeout(statusTimerRef.current); };
+  }, [status]);
 
   async function sendCode() {
     if (!phone.trim()) {
@@ -113,6 +121,22 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
 
   return (
     <div className="h-screen overflow-hidden flex items-center justify-center p-3 md:p-5 bg-surface-container-low">
+      {/* 状态提示 Toast — 固定浮层，不占表单流空间 */}
+      <AnimatePresence>
+        {status && (
+          <motion.div
+            key={status}
+            initial={{ opacity: 0, y: -12 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -8 }}
+            transition={{ duration: 0.2 }}
+            onClick={() => setStatus('')}
+            className="fixed top-5 left-1/2 -translate-x-1/2 z-50 px-5 py-2.5 bg-white/90 backdrop-blur-md shadow-lg rounded-full border border-pink-100 text-sm text-secondary max-w-[90vw] text-center cursor-pointer select-none"
+          >
+            {status}
+          </motion.div>
+        )}
+      </AnimatePresence>
       <div className="w-full max-w-6xl h-full md:h-[calc(100vh-2.5rem)] grid grid-cols-1 lg:grid-cols-[1.08fr_0.92fr] bg-surface-container-lowest rounded-xl shadow-[0_30px_60px_rgba(167,41,90,0.06)] overflow-hidden">
         {/* Illustration Side */}
         <div className="hidden lg:flex relative bg-surface-container-low flex-col items-center justify-center p-10 overflow-hidden">
@@ -291,8 +315,6 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
                           : '验证码注册')}
                   </button>
                 </div>
-
-                {status && <p className="text-xs text-secondary px-3">{status}</p>}
 
                 {/* 始终占位，避免登录/注册切换时高度跳动 */}
                 <p className="text-xs text-center pt-1" style={{ visibility: authMode === 'login' ? 'visible' : 'hidden' }}>
