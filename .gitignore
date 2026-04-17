@@ -33,7 +33,8 @@ meme-c/.runtime/
 
 # Fish Audio Pro model files
 meme/fish-speech/checkpoints/s2-pro/
-meme/fishaudio-s2-pro/
+fish-audio-s2-pro/
+meme/fish-audio-s2-pro/
 
 # Binaries
 meme-c/backend/backend
