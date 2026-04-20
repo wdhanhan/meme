@@ -1,0 +1,59 @@
+#!/usr/bin/env bash
+# pre-snapshot-cleanup.sh — scrub machine-specific state from a GPU host
+# right before powering off to create a cloud image. Run AFTER
+# build-gpu-image.sh, as the last thing before `poweroff`.
+#
+# Removes:
+#   - tailscale login state (so the clone registers as a new device)
+#   - first-boot done marker (so the clone actually runs bootstrap)
+#   - any leftover /etc/memec-bootstrap.env (clones get their own via userdata)
+#   - /etc/memec-node.env written by a previous bootstrap run
+#   - machine-id (regenerated on first boot of the clone)
+#   - SSH host keys (so every clone gets its own identity)
+#   - bash history, journal logs, apt caches
+
+set -euo pipefail
+
+if [[ "$(id -u)" -ne 0 ]]; then
+  echo "[ERROR] must run as root" >&2
+  exit 1
+fi
+
+echo "[cleanup] tailscale logout"
+if command -v tailscale >/dev/null 2>&1; then
+  tailscale logout || true
+  systemctl stop tailscaled || true
+  rm -rf /var/lib/tailscale/tailscaled.state || true
+fi
+
+echo "[cleanup] removing first-boot markers and per-instance env"
+rm -f /var/lib/memec-bootstrap.done
+rm -f /etc/memec-bootstrap.env
+rm -f /etc/memec-node.env
+systemctl disable memec-heartbeat.timer >/dev/null 2>&1 || true
+rm -f /etc/systemd/system/memec-heartbeat.service
+rm -f /etc/systemd/system/memec-heartbeat.timer
+
+echo "[cleanup] resetting machine-id"
+: > /etc/machine-id
+rm -f /var/lib/dbus/machine-id
+ln -s /etc/machine-id /var/lib/dbus/machine-id 2>/dev/null || true
+
+echo "[cleanup] removing SSH host keys (regenerated on next boot)"
+rm -f /etc/ssh/ssh_host_*
+
+echo "[cleanup] truncating logs"
+journalctl --rotate >/dev/null 2>&1 || true
+journalctl --vacuum-time=1s >/dev/null 2>&1 || true
+find /var/log -type f \( -name '*.log' -o -name '*.gz' -o -name '*.1' \) -exec truncate -s 0 {} \; 2>/dev/null || true
+
+echo "[cleanup] clearing apt caches"
+apt-get clean >/dev/null 2>&1 || true
+
+echo "[cleanup] clearing shell histories"
+rm -f /root/.bash_history
+find /home -maxdepth 2 -name '.bash_history' -delete 2>/dev/null || true
+history -c 2>/dev/null || true
+
+echo
+echo "[OK] machine state scrubbed. Safe to 'poweroff' and snapshot now."

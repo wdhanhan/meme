@@ -1,23 +1,26 @@
 #!/usr/bin/env bash
-# build-gpu-image.sh — prep a GPU host into a "golden" state so a cloud
-# snapshot / AMI of the resulting disk can be cloned to spin up new workers.
+# build-gpu-image.sh — prep a GPU host into a "golden" state so a cloud image
+# / snapshot of it can be cloned to spin up new workers.
 #
-# Run this once on a fresh Ubuntu 22.04+ GPU instance that has the NVIDIA
-# driver installed. When it finishes, stop the instance and capture a
-# snapshot / custom image from the cloud console. New workers launched from
-# that snapshot will, at first boot, run /etc/memec-bootstrap.env +
-# node-bootstrap.sh to join the cluster.
+# Modes:
+#   in-place (default)  Uses the repo at its current path as the runtime root.
+#                       Skips rsync, skips fish install if venv+model already
+#                       exist. Use this when the machine itself IS becoming
+#                       the image (Aliyun "create custom image" / AWS AMI
+#                       from a running instance).
+#   staged              Set MEMEC_INSTALL_PATH to a different path; repo is
+#                       rsynced there. Use this when you want the runtime to
+#                       live at a canonical path like /opt/meme.
 #
-# What this script does:
-#   1. Installs Tailscale, curl, jq.
-#   2. Syncs the meme repo into /opt/meme (so node-bootstrap.sh is at a
-#      stable path regardless of where this script was invoked from).
-#   3. Runs the existing fish-speech installer so the venv + model are baked
-#      into the image.
-#   4. Writes a systemd oneshot unit `memec-node-bootstrap.service` that runs
-#      on first boot against /etc/memec-bootstrap.env (which the operator
-#      supplies via cloud-init userdata).
-#   5. Clears machine-specific state so the snapshot is portable.
+# What the script does:
+#   1. Installs Tailscale, curl, jq (idempotent).
+#   2. [staged only] rsyncs the repo to MEMEC_INSTALL_PATH.
+#   3. [if needed] runs fish-speech installer to bake venv + model.
+#   4. Writes memec-node-bootstrap.service which, on first boot, runs
+#      node-bootstrap.sh against /etc/memec-bootstrap.env.
+#
+# Intentionally does NOT clean machine-specific state. Before powering off
+# for the snapshot, run `pre-snapshot-cleanup.sh` (printed at the end).
 
 set -euo pipefail
 
@@ -30,37 +33,54 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 MEME_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 REPO_ROOT="$(cd "${MEME_DIR}/.." && pwd)"
 
-TARGET_ROOT="/opt/meme"
+TARGET_ROOT="${MEMEC_INSTALL_PATH:-${REPO_ROOT}}"
 
-echo "[build] installing system dependencies"
-apt-get update
-apt-get install -y curl jq rsync ca-certificates git
+echo "[build] repo at:       ${REPO_ROOT}"
+echo "[build] runtime target: ${TARGET_ROOT}"
 
-echo "[build] installing tailscale"
+echo "[build] installing system dependencies (tailscale, curl, jq)"
+if command -v apt-get >/dev/null 2>&1; then
+  apt-get update
+  apt-get install -y curl jq rsync ca-certificates git
+fi
 if ! command -v tailscale >/dev/null 2>&1; then
   curl -fsSL https://tailscale.com/install.sh | sh
 fi
 systemctl enable tailscaled >/dev/null 2>&1 || true
 
-echo "[build] syncing repo to ${TARGET_ROOT}"
-mkdir -p "${TARGET_ROOT}"
-rsync -a --delete \
-  --exclude '.git/' \
-  --exclude 'meme-c/data/postgres/' \
-  --exclude 'meme-c/logs/' \
-  --exclude '**/node_modules/' \
-  --exclude '**/dist/' \
-  --exclude '**/build/' \
-  --exclude '**/__pycache__/' \
-  "${REPO_ROOT}/" "${TARGET_ROOT}/"
+if [[ "${TARGET_ROOT}" != "${REPO_ROOT}" ]]; then
+  echo "[build] syncing repo to ${TARGET_ROOT}"
+  mkdir -p "${TARGET_ROOT}"
+  rsync -a --delete \
+    --exclude '.git/' \
+    --exclude 'meme-c/data/postgres/' \
+    --exclude 'meme-c/logs/' \
+    --exclude '**/node_modules/' \
+    --exclude '**/dist/' \
+    --exclude '**/build/' \
+    --exclude '**/__pycache__/' \
+    "${REPO_ROOT}/" "${TARGET_ROOT}/"
+else
+  echo "[build] in-place mode: no rsync needed"
+fi
 
-echo "[build] baking fish-speech (venv + model) — this may take a while"
-python3 "${TARGET_ROOT}/meme/start_fish_s2_server.py" --skip-install || true
-# Second pass without skip-install to ensure deps are present too.
-python3 "${TARGET_ROOT}/meme/start_fish_s2_server.py"
+FISH_VENV_PY="${TARGET_ROOT}/.venvs/fishspeech/bin/python"
+MODEL_DIR="${TARGET_ROOT}/meme/fish-speech/checkpoints/s2-pro"
+if [[ -x "${FISH_VENV_PY}" && -f "${MODEL_DIR}/codec.pth" ]]; then
+  echo "[build] fish venv + model already present, skipping installer"
+else
+  echo "[build] baking fish-speech (this may take a while)"
+  python3 "${TARGET_ROOT}/meme/start_fish_s2_server.py" --skip-install || true
+  python3 "${TARGET_ROOT}/meme/start_fish_s2_server.py"
+fi
 
-echo "[build] installing first-boot unit"
-cat > /etc/systemd/system/memec-node-bootstrap.service <<'EOF'
+BOOTSTRAP_PATH="${TARGET_ROOT}/meme/scripts/node-bootstrap.sh"
+if [[ ! -x "${BOOTSTRAP_PATH}" ]]; then
+  chmod +x "${BOOTSTRAP_PATH}"
+fi
+
+echo "[build] installing memec-node-bootstrap.service"
+cat > /etc/systemd/system/memec-node-bootstrap.service <<EOF
 [Unit]
 Description=memec node first-boot bootstrap
 After=network-online.target tailscaled.service
@@ -71,7 +91,7 @@ ConditionPathExists=!/var/lib/memec-bootstrap.done
 [Service]
 Type=oneshot
 EnvironmentFile=/etc/memec-bootstrap.env
-ExecStart=/bin/bash /opt/meme/meme/scripts/node-bootstrap.sh
+ExecStart=/bin/bash ${BOOTSTRAP_PATH}
 ExecStartPost=/bin/touch /var/lib/memec-bootstrap.done
 RemainAfterExit=yes
 
@@ -81,23 +101,12 @@ EOF
 systemctl daemon-reload
 systemctl enable memec-node-bootstrap.service
 
-echo "[build] clearing machine-specific state for portable snapshot"
-tailscale logout >/dev/null 2>&1 || true
-rm -f /var/lib/memec-bootstrap.done
-truncate -s 0 /etc/machine-id || true
-: > /var/log/lastlog || true
-find /var/log -type f -name '*.log' -exec truncate -s 0 {} + || true
-rm -rf /root/.bash_history /home/*/.bash_history /tmp/* /var/tmp/* || true
-
 echo
-echo "[OK] golden image prepared."
-echo "Next steps:"
-echo "  1. Power off this instance."
-echo "  2. Capture a snapshot / create a custom image in your cloud console."
-echo "  3. When launching a new GPU worker, attach cloud-init userdata that"
-echo "     writes /etc/memec-bootstrap.env containing:"
-echo "         TS_AUTHKEY=<tailscale-authkey>"
-echo "         MEMEC_BACKEND_URL=<http(s)://backend-host:port>"
-echo "         MEMEC_CLUSTER_TOKEN=<shared secret>"
-echo "         MEMEC_REGION=<free-form tag, e.g. sa-riyadh>"
-echo "     memec-node-bootstrap.service will run it exactly once at first boot."
+echo "[OK] bootstrap unit installed, pointing at:"
+echo "     ${BOOTSTRAP_PATH}"
+echo
+echo "Before powering off to snapshot, run:"
+echo "     sudo bash ${MEME_DIR}/scripts/pre-snapshot-cleanup.sh"
+echo "     poweroff"
+echo
+echo "Then in Aliyun console: ECS 实例 → 更多 → 云盘和镜像 → 创建自定义镜像."
