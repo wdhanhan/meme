@@ -63,9 +63,12 @@ echo "[cleanup] clearing tmp + user caches"
 rm -rf /tmp/* /tmp/.[!.]* /var/tmp/* 2>/dev/null || true
 rm -rf /root/.cache/pip /root/.cache/huggingface /root/.cache/modelscope /root/.cache/torch 2>/dev/null || true
 
-echo "[cleanup] removing developer/IDE state (cursor, claude, etc.)"
+echo "[cleanup] removing developer/IDE state (cursor, vscode)"
 rm -rf /root/.cursor /root/.cursor-server /root/.vscode-server 2>/dev/null || true
-rm -rf /root/.claude /root/.claude.json /root/.config/configstore 2>/dev/null || true
+rm -rf /root/.config/configstore 2>/dev/null || true
+# Intentionally keep /root/.claude and /root/.claude.json so clones boot with
+# Claude Code ready to use. NOTE: these dirs may contain auth tokens / API
+# keys — every clone of this image will inherit them.
 
 echo "[cleanup] truncating logs"
 journalctl --rotate >/dev/null 2>&1 || true

@@ -43,7 +43,16 @@ if ! command -v tailscale >/dev/null 2>&1; then
   echo "[bootstrap] installing tailscale"
   curl -fsSL https://tailscale.com/install.sh | sh
 fi
+
+# Defensive: if the golden image leaked a tailscaled.state, this clone would
+# boot with the original machine's identity and get "Duplicate node key" in
+# admin. Force a fresh identity on first bootstrap run.
+echo "[bootstrap] resetting tailscale identity for fresh node key"
+systemctl stop tailscaled >/dev/null 2>&1 || true
+rm -f /var/lib/tailscale/tailscaled.state
 systemctl enable --now tailscaled >/dev/null 2>&1 || true
+systemctl start tailscaled >/dev/null 2>&1 || true
+sleep 2
 
 tailscale up \
   --authkey="${TS_AUTHKEY}" \
