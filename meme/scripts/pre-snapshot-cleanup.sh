@@ -6,11 +6,15 @@
 # Removes:
 #   - tailscale login state (so the clone registers as a new device)
 #   - first-boot done marker (so the clone actually runs bootstrap)
-#   - any leftover /etc/memec-bootstrap.env (clones get their own via userdata)
 #   - /etc/memec-node.env written by a previous bootstrap run
 #   - machine-id (regenerated on first boot of the clone)
 #   - SSH host keys (so every clone gets its own identity)
 #   - bash history, journal logs, apt caches
+#
+# INTENTIONALLY KEPT (so clones auto-bootstrap without cloud-init):
+#   - /etc/memec-bootstrap.env  -> must be written once on the golden image
+#                                  before running this script.
+#                                  Requires TS_AUTHKEY to be Reusable.
 
 set -euo pipefail
 
@@ -28,8 +32,13 @@ fi
 
 echo "[cleanup] removing first-boot markers and per-instance env"
 rm -f /var/lib/memec-bootstrap.done
-rm -f /etc/memec-bootstrap.env
 rm -f /etc/memec-node.env
+if [[ ! -s /etc/memec-bootstrap.env ]]; then
+  echo "[WARN] /etc/memec-bootstrap.env is missing or empty — clones will NOT auto-bootstrap." >&2
+  echo "[WARN] Write it before running this script, or provide it via userdata at deploy time." >&2
+else
+  echo "[cleanup] KEEPING /etc/memec-bootstrap.env (baked into image for auto-bootstrap)"
+fi
 systemctl disable memec-heartbeat.timer >/dev/null 2>&1 || true
 rm -f /etc/systemd/system/memec-heartbeat.service
 rm -f /etc/systemd/system/memec-heartbeat.timer
