@@ -48,6 +48,7 @@ systemctl enable --now tailscaled >/dev/null 2>&1 || true
 tailscale up \
   --authkey="${TS_AUTHKEY}" \
   --hostname="${NODE_ID}" \
+  --advertise-tags=tag:memec-gpu \
   --accept-routes \
   --ssh
 

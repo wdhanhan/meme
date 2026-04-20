@@ -42,6 +42,22 @@ ln -s /etc/machine-id /var/lib/dbus/machine-id 2>/dev/null || true
 echo "[cleanup] removing SSH host keys (regenerated on next boot)"
 rm -f /etc/ssh/ssh_host_*
 
+echo "[cleanup] removing per-host user SSH state (authorized_keys, known_hosts, keypairs)"
+rm -f /root/.ssh/authorized_keys /root/.ssh/known_hosts /root/.ssh/known_hosts.old
+rm -f /root/.ssh/id_* /root/.ssh/id_*.pub
+rm -f /root/.lesshst
+
+echo "[cleanup] removing baked secrets from repo (.env.*.local must come from userdata)"
+find /root/meme -maxdepth 6 -name '.env.*.local' -not -path '*/.venvs/*' -not -path '*/node_modules/*' -print -delete 2>/dev/null || true
+
+echo "[cleanup] clearing tmp + user caches"
+rm -rf /tmp/* /tmp/.[!.]* /var/tmp/* 2>/dev/null || true
+rm -rf /root/.cache/pip /root/.cache/huggingface /root/.cache/modelscope /root/.cache/torch 2>/dev/null || true
+
+echo "[cleanup] removing developer/IDE state (cursor, claude, etc.)"
+rm -rf /root/.cursor /root/.cursor-server /root/.vscode-server 2>/dev/null || true
+rm -rf /root/.claude /root/.claude.json /root/.config/configstore 2>/dev/null || true
+
 echo "[cleanup] truncating logs"
 journalctl --rotate >/dev/null 2>&1 || true
 journalctl --vacuum-time=1s >/dev/null 2>&1 || true
