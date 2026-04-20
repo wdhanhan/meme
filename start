@@ -13,7 +13,7 @@ START_FRONT=1
 FRONT_PORT="3001"
 FRONT_HOST="0.0.0.0"
 FRONT_INSTALL=1
-RESTART_FRONT=0
+RESTART_FRONT=1
 ASSUME_MOVED=0
 FRONT_USE_NGINX=1
 FRONT_DIST_DIR="/var/www/meme-front-c-v2"
@@ -475,3 +475,7 @@ echo "[DONE] startup completed."
 echo "  meme      : $([[ "$START_MEME" -eq 1 ]] && echo started || echo skipped)"
 echo "  meme-c    : $([[ "$START_MEME_C" -eq 1 ]] && echo started || echo skipped)"
 echo "  front     : $([[ "$START_FRONT" -eq 1 ]] && echo started || echo skipped)"
+
+sudo mkdir -p /root/meme/meme-c/.runtime
+# 短信：优先 MEMEC_SMS_SECRETS_FILE（meme-c/.sms.secrets，5 行纯值，无 KEY=），由 deploy.sh 或本机手工维护；勿把真实密钥提交到仓库。
+sudo systemctl restart meme-c-backend

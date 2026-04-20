@@ -60,6 +60,21 @@ CREATE TABLE IF NOT EXISTS user_voices (
 `,
 		`CREATE UNIQUE INDEX IF NOT EXISTS idx_user_voices_user_ref ON user_voices (user_id, reference_id);`,
 		`CREATE INDEX IF NOT EXISTS idx_user_voices_user_created ON user_voices (user_id, created_at DESC);`,
+		`
+CREATE TABLE IF NOT EXISTS cluster_nodes (
+  id              BIGSERIAL PRIMARY KEY,
+  node_id         TEXT NOT NULL UNIQUE,
+  tailscale_ip    TEXT NOT NULL,
+  fish_port_base  INT NOT NULL DEFAULT 8080,
+  gpu_count       INT NOT NULL DEFAULT 1,
+  region          TEXT NOT NULL DEFAULT '',
+  status          TEXT NOT NULL DEFAULT 'active',
+  last_seen_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+`,
+		`CREATE INDEX IF NOT EXISTS idx_cluster_nodes_last_seen ON cluster_nodes (last_seen_at DESC);`,
 	}
 
 	for _, stmt := range stmts {

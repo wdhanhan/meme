@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os"
 	"regexp"
 	"sort"
 	"strings"
@@ -408,12 +409,47 @@ func getUID(claims jwt.MapClaims) int64 {
 	return int64(uid)
 }
 
+// smsSecretsFileLines reads MEMEC_SMS_SECRETS_FILE: five lines of values only (no KEY=),
+// order: access key id, secret, sign name, template code, region (region optional, default cn-hangzhou).
+// Empty lines and lines starting with # are skipped.
+func smsSecretsFileLines() (accessKeyID, accessKeySecret, signName, templateCode, regionID string, ok bool) {
+	path := strings.TrimSpace(os.Getenv("MEMEC_SMS_SECRETS_FILE"))
+	if path == "" {
+		return "", "", "", "", "", false
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", "", "", "", "", false
+	}
+	var lines []string
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		lines = append(lines, line)
+	}
+	if len(lines) < 4 {
+		return "", "", "", "", "", false
+	}
+	regionID = "cn-hangzhou"
+	if len(lines) >= 5 && strings.TrimSpace(lines[4]) != "" {
+		regionID = strings.TrimSpace(lines[4])
+	}
+	return lines[0], lines[1], lines[2], lines[3], regionID, true
+}
+
 func sendSMSCodeViaAliyun(phone, code string) error {
-	accessKeyID := strings.TrimSpace(envOrDefault("ALIYUN_SMS_ACCESS_KEY_ID", ""))
-	accessKeySecret := strings.TrimSpace(envOrDefault("ALIYUN_SMS_ACCESS_KEY_SECRET", ""))
-	signName := strings.TrimSpace(envOrDefault("ALIYUN_SMS_SIGN_NAME", ""))
-	templateCode := strings.TrimSpace(envOrDefault("ALIYUN_SMS_TEMPLATE_CODE", ""))
-	regionID := strings.TrimSpace(envOrDefault("ALIYUN_SMS_REGION_ID", "cn-hangzhou"))
+	var accessKeyID, accessKeySecret, signName, templateCode, regionID string
+	if a, b, c, d, r, ok := smsSecretsFileLines(); ok {
+		accessKeyID, accessKeySecret, signName, templateCode, regionID = a, b, c, d, r
+	} else {
+		accessKeyID = strings.TrimSpace(envOrDefault("ALIYUN_SMS_ACCESS_KEY_ID", ""))
+		accessKeySecret = strings.TrimSpace(envOrDefault("ALIYUN_SMS_ACCESS_KEY_SECRET", ""))
+		signName = strings.TrimSpace(envOrDefault("ALIYUN_SMS_SIGN_NAME", ""))
+		templateCode = strings.TrimSpace(envOrDefault("ALIYUN_SMS_TEMPLATE_CODE", ""))
+		regionID = strings.TrimSpace(envOrDefault("ALIYUN_SMS_REGION_ID", "cn-hangzhou"))
+	}
 	if accessKeyID == "" || accessKeySecret == "" || signName == "" || templateCode == "" {
 		return fmt.Errorf("aliyun sms not configured")
 	}

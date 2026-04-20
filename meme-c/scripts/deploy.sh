@@ -34,6 +34,10 @@ fish_write_upstreams_env "${ROOT_DIR}"
 # JWT：按要求与后端服务同处部署脚本，直接写死在 systemd Environment 中
 MEMEC_JWT_SECRET="${MEMEC_JWT_SECRET:-memec-fixed-jwt-secret-2026}"
 
+# 集群共享密钥：GPU 节点注册/心跳凭证（docs/CLUSTER.md）。节点 cloud-init
+# 中的 MEMEC_CLUSTER_TOKEN 必须与此值一致。
+MEMEC_CLUSTER_TOKEN="${MEMEC_CLUSTER_TOKEN:-8060c13da2cf86913c604b75b90c7a9259a18a5a74ca659d7786a57cf0980752}"
+
 # 阿里云短信：AK/SK 不入库；从本机 ninelevel/.env 等写入 .runtime，供 systemd EnvironmentFile 读取
 NINELEVEL_ROOT="${NINELEVEL_ROOT:-/root/ninelevel}"
 NINELEVEL_ENV_FILE="${NINELEVEL_ENV_FILE:-${NINELEVEL_ROOT}/.env}"
@@ -57,8 +61,18 @@ if [[ -f "${NINELEVEL_ENV_FILE}" ]]; then
 fi
 
 SMS_RUNTIME_ENV="${ROOT_DIR}/.runtime/aliyun-sms-from-ninelevel.env"
+SMS_SECRETS_FILE="${ROOT_DIR}/.sms.secrets"
 mkdir -p "${ROOT_DIR}/.runtime"
 umask 077
+{
+  printf '%s\n' "${ALIYUN_SMS_ACCESS_KEY_ID}"
+  printf '%s\n' "${ALIYUN_SMS_ACCESS_KEY_SECRET}"
+  printf '%s\n' "${ALIYUN_SMS_SIGN_NAME}"
+  printf '%s\n' "${ALIYUN_SMS_TEMPLATE_CODE}"
+  printf '%s\n' "${ALIYUN_SMS_REGION_ID}"
+} > "${SMS_SECRETS_FILE}.new"
+mv -f "${SMS_SECRETS_FILE}.new" "${SMS_SECRETS_FILE}"
+chmod 600 "${SMS_SECRETS_FILE}"
 {
   printf '%s\n' "ALIYUN_SMS_SIGN_NAME=${ALIYUN_SMS_SIGN_NAME}"
   printf '%s\n' "ALIYUN_SMS_TEMPLATE_CODE=${ALIYUN_SMS_TEMPLATE_CODE}"
@@ -69,9 +83,9 @@ umask 077
 mv -f "${SMS_RUNTIME_ENV}.new" "${SMS_RUNTIME_ENV}"
 chmod 600 "${SMS_RUNTIME_ENV}"
 if [[ -z "${ALIYUN_SMS_ACCESS_KEY_ID}" || -z "${ALIYUN_SMS_ACCESS_KEY_SECRET}" ]]; then
-  echo "[WARN] 未从 ${NINELEVEL_ENV_FILE} 读到短信 AK/SK，请配置该文件或部署后维护 ${SMS_RUNTIME_ENV}"
+  echo "[WARN] 未从 ${NINELEVEL_ENV_FILE} 读到短信 AK/SK，请配置该文件或部署后维护 ${SMS_SECRETS_FILE}（5 行纯值）与 ${SMS_RUNTIME_ENV}"
 else
-  echo "[INFO] 已生成 ${SMS_RUNTIME_ENV}（密钥不入库）"
+  echo "[INFO] 已生成 ${SMS_SECRETS_FILE}（5 行纯值，无字段名）与 ${SMS_RUNTIME_ENV}"
 fi
 
 mkdir -p "${LOG_DIR}"
@@ -127,6 +141,8 @@ Environment=MEMEC_DATA_DIR=${ROOT_DIR}/data
 EnvironmentFile=-${ROOT_DIR}/.runtime/fish-upstreams.env
 Environment=MEMEC_POSTGRES_DSN=${POSTGRES_DSN}
 Environment=MEMEC_JWT_SECRET=${MEMEC_JWT_SECRET}
+Environment=MEMEC_CLUSTER_TOKEN=${MEMEC_CLUSTER_TOKEN}
+Environment=MEMEC_SMS_SECRETS_FILE=${SMS_SECRETS_FILE}
 Environment=TTS_QUEUE_SIZE=64
 Environment=HTTP_TIMEOUT_SEC=300
 Environment=DEFAULT_MAX_NEW_TOKENS=1024

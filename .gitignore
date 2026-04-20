@@ -32,6 +32,10 @@ meme-c/data/generations.jsonl
 meme-c/data/training_progress.json
 meme-c/.runtime/
 
+# Postgres PGDATA (binary cluster; do not commit — export with meme-c/scripts/pg-dump-for-git.sh)
+data/postgres/
+meme-c/data/postgres/
+
 # Fish Audio Pro model files
 meme/fish-speech/checkpoints/s2-pro/
 fish-audio-s2-pro/

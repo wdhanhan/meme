@@ -22,7 +22,9 @@ type UserVoiceResp struct {
 	CreatedAt   string `json:"created_at"`
 }
 
-func registerVoiceRoutes(r *gin.Engine, db *sql.DB, cfg AppConfig, refs *referenceIndex) {
+func registerVoiceRoutes(r *gin.Engine, db *sql.DB, cfg AppConfig, pool *UpstreamPool) {
+	_ = cfg
+	refs := pool.Refs()
 	authRequired := authRequiredMiddleware()
 
 	// GET /api/voices — 当前用户的音色列表
@@ -107,7 +109,7 @@ func registerVoiceRoutes(r *gin.Engine, db *sql.DB, cfg AppConfig, refs *referen
 		uploadClient := &http.Client{Timeout: 120 * time.Second}
 		successCount := 0
 		var lastErrMsg string
-		for _, fishAPI := range cfg.FishAPIs {
+		for _, fishAPI := range pool.Snapshot() {
 			upstreamURL := fmt.Sprintf("%s/v1/references/add?format=json", fishAPI)
 			req, reqErr := http.NewRequest(http.MethodPost, upstreamURL, bytes.NewReader(formBytes))
 			if reqErr != nil {

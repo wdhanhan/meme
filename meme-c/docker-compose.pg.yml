@@ -10,14 +10,12 @@ services:
       TZ: Asia/Shanghai
     ports:
       - "5432:5432"
+    # Runtime cluster under repo root: meme/data/postgres (not committed; use scripts/pg-dump-for-git.sh).
     volumes:
-      - memec_pg_data:/var/lib/postgresql/data
+      - ../data/postgres:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U memec -d memec"]
       interval: 5s
       timeout: 3s
       retries: 20
-
-volumes:
-  memec_pg_data:
 

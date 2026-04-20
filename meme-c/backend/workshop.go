@@ -52,14 +52,15 @@ type patchWorkshopJobReq struct {
 // ─── Worker ──────────────────────────────────────────────────────────────────
 
 type workshopWorker struct {
-	db        *sql.DB
-	cfg       AppConfig
-	refs      *referenceIndex
-	ttsQueues map[string]chan ttsJob
-	jobCh     chan int64
-	sem       chan struct{} // limits concurrent jobs
-	once      sync.Once
+	db    *sql.DB
+	cfg   AppConfig
+	pool  *UpstreamPool
+	jobCh chan int64
+	sem   chan struct{} // limits concurrent jobs
+	once  sync.Once
 }
+
+func (w *workshopWorker) refs() *referenceIndex { return w.pool.Refs() }
 
 var globalWorkshopWorker *workshopWorker
 
@@ -96,14 +97,13 @@ func injectBreakTagsForSleep(s string) string {
 	return out
 }
 
-func initWorkshopWorker(ctx context.Context, db *sql.DB, cfg AppConfig, refs *referenceIndex, ttsQueues map[string]chan ttsJob) {
+func initWorkshopWorker(ctx context.Context, db *sql.DB, cfg AppConfig, pool *UpstreamPool) {
 	globalWorkshopWorker = &workshopWorker{
-		db:        db,
-		cfg:       cfg,
-		refs:      refs,
-		ttsQueues: ttsQueues,
-		jobCh:     make(chan int64, 128),
-		sem:       make(chan struct{}, 3),
+		db:    db,
+		cfg:   cfg,
+		pool:  pool,
+		jobCh: make(chan int64, 128),
+		sem:   make(chan struct{}, 3),
 	}
 	globalWorkshopWorker.start(ctx)
 }
@@ -258,10 +258,9 @@ func (w *workshopWorker) processJob(ctx context.Context, jobID int64) {
 				resultCh <- segResult{idx: idx, err: marshalErr}
 				return
 			}
-			api := pickAPIForSegment(idx, segReq, w.cfg.FishAPIs, w.refs)
-			q, ok := w.ttsQueues[api]
+			_, q, ok := w.pool.PickForSegment(idx, segReq)
 			if !ok {
-				resultCh <- segResult{idx: idx, err: fmt.Errorf("no queue for api %s", api)}
+				resultCh <- segResult{idx: idx, err: fmt.Errorf("no upstream available")}
 				return
 			}
 			tTTS := time.Now()

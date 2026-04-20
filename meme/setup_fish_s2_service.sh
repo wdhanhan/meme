@@ -8,7 +8,11 @@ WORKDIR="${SCRIPT_DIR}/fish-speech"
 VENV_PY="${ROOT_DIR}/.venvs/fishspeech/bin/python"
 MODEL_DIR="${SCRIPT_DIR}/fish-speech/checkpoints/s2-pro"
 LOCAL_LOG_DIR="${SCRIPT_DIR}/logs"
-BASE_PORT=8080
+BASE_PORT="${FISH_BASE_PORT:-8080}"
+# Interface to bind fish API on. Default 127.0.0.1 (single-box). For cluster
+# nodes, bootstrap.sh exports FISH_LISTEN_HOST to the tailscale IP so only the
+# tailnet can reach the service.
+LISTEN_HOST="${FISH_LISTEN_HOST:-127.0.0.1}"
 
 if [[ ! -x "${VENV_PY}" ]]; then
   echo "[ERROR] Python venv not found: ${VENV_PY}"
@@ -78,7 +82,7 @@ WorkingDirectory=${WORKDIR}
 Environment=PYTHONUNBUFFERED=1
 Environment=CUDA_VISIBLE_DEVICES=${GPU_ID}
 # 每个实例绑定单卡并独立监听端口。
-ExecStart=${VENV_PY} tools/api_server.py --llama-checkpoint-path ${MODEL_DIR} --decoder-checkpoint-path ${MODEL_DIR}/codec.pth --listen 127.0.0.1:${PORT} --device cuda --compile --workers 1
+ExecStart=${VENV_PY} tools/api_server.py --llama-checkpoint-path ${MODEL_DIR} --decoder-checkpoint-path ${MODEL_DIR}/codec.pth --listen ${LISTEN_HOST}:${PORT} --device cuda --compile --workers 1
 Restart=always
 RestartSec=5
 StartLimitIntervalSec=0

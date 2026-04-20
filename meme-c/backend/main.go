@@ -16,7 +16,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -101,6 +100,12 @@ func (ri *referenceIndex) addReferenceToAPI(api, refID string) {
 		ri.apiRefs[api] = make(map[string]struct{})
 	}
 	ri.apiRefs[api][refID] = struct{}{}
+}
+
+func (ri *referenceIndex) removeAPI(api string) {
+	ri.mu.Lock()
+	defer ri.mu.Unlock()
+	delete(ri.apiRefs, api)
 }
 
 func (ri *referenceIndex) apisForReference(refID string) []string {
@@ -237,19 +242,6 @@ func addBreathByMode(text string, mode string) (string, error) {
 		return text, nil
 	}
 	return injectBreakTagsForSleep(text), nil
-}
-
-func pickAPIForSegment(segIndex int, req TTSRequest, apis []string, refs *referenceIndex) string {
-	if len(apis) == 0 {
-		return "http://127.0.0.1:8080"
-	}
-	candidates := apis
-	if strings.TrimSpace(req.ReferenceID) != "" {
-		if matched := refs.apisForReference(req.ReferenceID); len(matched) > 0 {
-			candidates = matched
-		}
-	}
-	return candidates[segIndex%len(candidates)]
 }
 
 func wavToMp3Bytes(wav []byte) ([]byte, error) {
@@ -462,74 +454,71 @@ func parseFishAPIs() []string {
 	return []string{envOrDefault("FISH_API_BASE", "http://127.0.0.1:8080")}
 }
 
-func startTTSWorkers(ctx context.Context, apis []string, client *http.Client, queues map[string]chan ttsJob, refs *referenceIndex) {
-	for _, api := range apis {
-		fishAPI := api
-		queue := queues[fishAPI]
-		go func() {
-			for {
-				select {
-				case <-ctx.Done():
-					return
-				case job := <-queue:
-					selectedAPI := fishAPI
-					upstreamURL := fmt.Sprintf("%s/v1/tts", fishAPI)
-					resp, body, err := doJSONPost(client, upstreamURL, job.payload)
-					if err == nil && resp.StatusCode >= 500 {
-						// Fish 服务刚重启/热身时偶发 500，这里短暂重试一次提升稳定性。
-						time.Sleep(1200 * time.Millisecond)
-						resp2, body2, err2 := doJSONPost(client, upstreamURL, job.payload)
-						if err2 == nil {
-							resp, body, err = resp2, body2, nil
+func runTTSWorker(ctx context.Context, fishAPI string, queue chan ttsJob, client *http.Client, pool *UpstreamPool) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case job, ok := <-queue:
+			if !ok {
+				return
+			}
+			selectedAPI := fishAPI
+			upstreamURL := fmt.Sprintf("%s/v1/tts", fishAPI)
+			resp, body, err := doJSONPost(client, upstreamURL, job.payload)
+			if err == nil && resp.StatusCode >= 500 {
+				// Fish 服务刚重启/热身时偶发 500，这里短暂重试一次提升稳定性。
+				time.Sleep(1200 * time.Millisecond)
+				resp2, body2, err2 := doJSONPost(client, upstreamURL, job.payload)
+				if err2 == nil {
+					resp, body, err = resp2, body2, nil
+				}
+			}
+			// 本卡仍失败时，切换到其他 GPU 实例兜底重试。
+			// 若请求携带 reference_id，仅允许在同样持有该 reference 的实例重试，
+			// 避免"出声成功但音色跑偏"。
+			if err != nil || (err == nil && resp.StatusCode >= 500) {
+				allowedBackups := pool.Snapshot()
+				var parsedReq TTSRequest
+				if uErr := json.Unmarshal(job.payload, &parsedReq); uErr == nil {
+					refID := strings.TrimSpace(parsedReq.ReferenceID)
+					if refID != "" {
+						if matched := pool.Refs().apisForReference(refID); len(matched) > 0 {
+							allowedBackups = matched
+						} else {
+							// 未知 reference 归属时，不跨卡兜底，保持失败可见，避免音色错配。
+							allowedBackups = []string{fishAPI}
 						}
 					}
-					// 本卡仍失败时，切换到其他 GPU 实例兜底重试。
-					// 若请求携带 reference_id，仅允许在同样持有该 reference 的实例重试，
-					// 避免“出声成功但音色跑偏”。
-					if err != nil || (err == nil && resp.StatusCode >= 500) {
-						allowedBackups := apis
-						var parsedReq TTSRequest
-						if uErr := json.Unmarshal(job.payload, &parsedReq); uErr == nil {
-							refID := strings.TrimSpace(parsedReq.ReferenceID)
-							if refID != "" && refs != nil {
-								if matched := refs.apisForReference(refID); len(matched) > 0 {
-									allowedBackups = matched
-								} else {
-									// 未知 reference 归属时，不跨卡兜底，保持失败可见，避免音色错配。
-									allowedBackups = []string{fishAPI}
-								}
-							}
-						}
-						for _, backupAPI := range allowedBackups {
-							if backupAPI == fishAPI {
-								continue
-							}
-							backupURL := fmt.Sprintf("%s/v1/tts", backupAPI)
-							resp2, body2, err2 := doJSONPost(client, backupURL, job.payload)
-							if err2 == nil && resp2.StatusCode < 500 {
-								selectedAPI = backupAPI
-								resp, body, err = resp2, body2, nil
-								break
-							}
-						}
+				}
+				for _, backupAPI := range allowedBackups {
+					if backupAPI == fishAPI {
+						continue
 					}
-
-					result := ttsResult{
-						fishAPI: selectedAPI,
-						err:     err,
-					}
-					if err == nil {
-						result.statusCode = resp.StatusCode
-						result.body = body
-					}
-					select {
-					case job.resultCh <- result:
-					default:
-						// 请求方已取消，丢弃结果避免 worker 阻塞。
+					backupURL := fmt.Sprintf("%s/v1/tts", backupAPI)
+					resp2, body2, err2 := doJSONPost(client, backupURL, job.payload)
+					if err2 == nil && resp2.StatusCode < 500 {
+						selectedAPI = backupAPI
+						resp, body, err = resp2, body2, nil
+						break
 					}
 				}
 			}
-		}()
+
+			result := ttsResult{
+				fishAPI: selectedAPI,
+				err:     err,
+			}
+			if err == nil {
+				result.statusCode = resp.StatusCode
+				result.body = body
+			}
+			select {
+			case job.resultCh <- result:
+			default:
+				// 请求方已取消，丢弃结果避免 worker 阻塞。
+			}
+		}
 	}
 }
 
@@ -541,27 +530,6 @@ func parseReferenceIDsFromBody(body []byte) ([]string, error) {
 		return nil, err
 	}
 	return parsed.ReferenceIDs, nil
-}
-
-func chooseAPIForTTS(req TTSRequest, apis []string, queues map[string]chan ttsJob, refs *referenceIndex, rr *uint64) string {
-	candidates := apis
-	if strings.TrimSpace(req.ReferenceID) != "" {
-		if matched := refs.apisForReference(req.ReferenceID); len(matched) > 0 {
-			candidates = matched
-		}
-	}
-	if len(candidates) == 0 {
-		return pickFishAPI(apis, rr)
-	}
-	chosen := candidates[0]
-	minLen := len(queues[chosen])
-	for _, api := range candidates[1:] {
-		if qlen := len(queues[api]); qlen < minLen {
-			chosen = api
-			minLen = qlen
-		}
-	}
-	return chosen
 }
 
 func submitTTSJob(ctx context.Context, q chan ttsJob, payload []byte, wantsM4A bool) (ttsResult, error) {
@@ -655,14 +623,6 @@ func streamFromUpstream(c *gin.Context, client *http.Client, upstreamURL string,
 	}
 }
 
-func pickFishAPI(apis []string, rr *uint64) string {
-	if len(apis) == 0 {
-		return "http://127.0.0.1:8080"
-	}
-	idx := atomic.AddUint64(rr, 1) - 1
-	return apis[idx%uint64(len(apis))]
-}
-
 func main() {
 	cfg := AppConfig{
 		ListenAddr:   envOrDefault("MEMEC_BACKEND_LISTEN", "127.0.0.1:8090"),
@@ -680,39 +640,10 @@ func main() {
 	client := &http.Client{
 		Timeout: time.Duration(cfg.TimeoutSec) * time.Second,
 	}
-	refs := newReferenceIndex(cfg.FishAPIs)
-	ttsQueues := make(map[string]chan ttsJob, len(cfg.FishAPIs))
-	for _, api := range cfg.FishAPIs {
-		ttsQueues[api] = make(chan ttsJob, cfg.QueueSize)
-	}
 	workerCtx, workerCancel := context.WithCancel(context.Background())
 	defer workerCancel()
-	startTTSWorkers(workerCtx, cfg.FishAPIs, client, ttsQueues, refs)
-
-	// 启动时异步刷新 refs 索引，使重启后能正确路由带 reference_id 的请求
-	go func() {
-		for _, fishAPI := range cfg.FishAPIs {
-			upstreamURL := fmt.Sprintf("%s/v1/references/list?format=json", fishAPI)
-			resp, err := client.Get(upstreamURL)
-			if err != nil {
-				fmt.Printf("[refs-init] failed to fetch %s: %v\n", fishAPI, err)
-				continue
-			}
-			body, err := io.ReadAll(resp.Body)
-			resp.Body.Close()
-			if err != nil || resp.StatusCode >= 400 {
-				fmt.Printf("[refs-init] bad response from %s: status=%d\n", fishAPI, resp.StatusCode)
-				continue
-			}
-			refIDs, err := parseReferenceIDsFromBody(body)
-			if err != nil {
-				fmt.Printf("[refs-init] parse error from %s: %v\n", fishAPI, err)
-				continue
-			}
-			refs.setAPIReferences(fishAPI, refIDs)
-			fmt.Printf("[refs-init] loaded %d references from %s\n", len(refIDs), fishAPI)
-		}
-	}()
+	pool := NewUpstreamPool(workerCtx, cfg.FishAPIs, cfg.QueueSize, client)
+	refs := pool.Refs()
 
 	loadGenerationsFromDisk()
 
@@ -728,21 +659,26 @@ func main() {
 		panic(err)
 	}
 	registerAuthRoutes(r, db)
-	initWorkshopWorker(workerCtx, db, cfg, refs, ttsQueues)
+	registerClusterRoutes(r, db)
+	pool.StartReconciler(db, 10*time.Second)
+	initWorkshopWorker(workerCtx, db, cfg, pool)
 	registerWorkshopRoutes(r, db)
-	registerVoiceRoutes(r, db, cfg, refs)
+	registerVoiceRoutes(r, db, cfg, pool)
 
 	r.GET("/api/health", func(c *gin.Context) {
+		apis := pool.Snapshot()
 		totalQueueLen := 0
-		for _, q := range ttsQueues {
-			totalQueueLen += len(q)
+		for _, api := range apis {
+			if q, ok := pool.QueueFor(api); ok {
+				totalQueueLen += len(q)
+			}
 		}
 		c.JSON(http.StatusOK, gin.H{
 			"status":         "ok",
 			"backend":        "meme-c",
-			"fish_api_bases": cfg.FishAPIs,
+			"fish_api_bases": apis,
 			"tts_queue_len":  totalQueueLen,
-			"tts_queue_cap":  cfg.QueueSize * len(cfg.FishAPIs),
+			"tts_queue_cap":  cfg.QueueSize * len(apis),
 		})
 	})
 
@@ -799,10 +735,9 @@ func main() {
 			}
 		}
 
-		targetAPI := chooseAPIForTTS(req, cfg.FishAPIs, ttsQueues, refs, &fishAPIRR)
-		targetQueue, ok := ttsQueues[targetAPI]
+		_, targetQueue, ok := pool.ChooseForTTS(req, &fishAPIRR)
 		if !ok {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "no queue available for selected upstream"})
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "no upstream available"})
 			return
 		}
 		result, jobErr := submitTTSJob(c.Request.Context(), targetQueue, payload, wantsM4A)
@@ -899,7 +834,11 @@ func main() {
 				return
 			}
 		}
-		targetAPI := chooseAPIForTTS(req, cfg.FishAPIs, ttsQueues, refs, &fishAPIRR)
+		targetAPI, _, chooseOK := pool.ChooseForTTS(req, &fishAPIRR)
+		if !chooseOK {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "no upstream available"})
+			return
+		}
 		upstreamURL := fmt.Sprintf("%s/v1/tts", targetAPI)
 		payloadMap := map[string]any{
 			"text":         req.Text,
@@ -1009,10 +948,9 @@ func main() {
 				firstPrefetchCh <- ttsResult{err: err}
 				return
 			}
-			api := pickAPIForSegment(0, prefReq, cfg.FishAPIs, refs)
-			q, ok := ttsQueues[api]
+			_, q, ok := pool.PickForSegment(0, prefReq)
 			if !ok {
-				firstPrefetchCh <- ttsResult{err: fmt.Errorf("no queue for prefetch")}
+				firstPrefetchCh <- ttsResult{err: fmt.Errorf("no upstream for prefetch")}
 				return
 			}
 			res, jErr := submitTTSJob(reqCtx, q, payload, false)
@@ -1034,7 +972,12 @@ func main() {
 
 		upstreamPlan := make([]string, len(segments))
 		for i := range segments {
-			upstreamPlan[i] = pickAPIForSegment(i, ttsBase, cfg.FishAPIs, refs)
+			api, _, ok := pool.PickForSegment(i, ttsBase)
+			if !ok {
+				c.JSON(http.StatusServiceUnavailable, gin.H{"error": "no upstream available"})
+				return
+			}
+			upstreamPlan[i] = api
 		}
 
 		c.Header("Content-Type", "application/x-ndjson; charset=utf-8")
@@ -1102,11 +1045,10 @@ func main() {
 					}
 					return
 				}
-				targetAPI := pickAPIForSegment(i, segReq, cfg.FishAPIs, refs)
-				q, ok := ttsQueues[targetAPI]
+				_, q, ok := pool.PickForSegment(i, segReq)
 				if !ok {
 					select {
-					case ready[i] <- ttsResult{err: fmt.Errorf("no queue for upstream")}:
+					case ready[i] <- ttsResult{err: fmt.Errorf("no upstream available")}:
 					default:
 					}
 					return
@@ -1200,7 +1142,7 @@ func main() {
 		union := make(map[string]struct{})
 		successCount := 0
 		var lastErr error
-		for _, fishAPI := range cfg.FishAPIs {
+		for _, fishAPI := range pool.Snapshot() {
 			upstreamURL := fmt.Sprintf("%s/v1/references/list?format=json", fishAPI)
 			resp, err := client.Get(upstreamURL)
 			if err != nil {
@@ -1298,7 +1240,8 @@ func main() {
 		var lastStatus int
 		var lastBody []byte
 
-		for _, fishAPI := range cfg.FishAPIs {
+		snapshot := pool.Snapshot()
+		for _, fishAPI := range snapshot {
 			upstreamURL := fmt.Sprintf("%s/v1/references/add?format=json", fishAPI)
 			httpReq, err := http.NewRequest(http.MethodPost, upstreamURL, bytes.NewReader(formBytes))
 			if err != nil {
@@ -1336,7 +1279,7 @@ func main() {
 			c.Data(lastStatus, "application/json", lastBody)
 			return
 		}
-		c.Header("X-References-Synced", fmt.Sprintf("%d/%d", successCount, len(cfg.FishAPIs)))
+		c.Header("X-References-Synced", fmt.Sprintf("%d/%d", successCount, len(snapshot)))
 		c.Data(http.StatusOK, "application/json", firstSuccessBody)
 	})
 
