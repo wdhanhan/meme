@@ -91,10 +91,27 @@ func injectBreakTagsForSleep(s string) string {
 	if out == "" {
 		return s
 	}
+	out = tidyPauseTags(out)
 	if !hasFishPauseTag(out) {
 		out += "[break]"
 	}
 	return out
+}
+
+// tidyPauseTags collapses adjacent Fish pause tags into a single tag of the
+// highest tier present. Prevents jarring double-pauses at punctuation clusters
+// like "？！" → "？[long-break]！[long-break]" → "？！[long-break]".
+func tidyPauseTags(s string) string {
+	// Two sweeps handle chains up to length 4 which is more than enough in
+	// practice. Order matters: do long-break promotions before plain-break
+	// collapse so "[break][long-break]" resolves to "[long-break]".
+	for i := 0; i < 2; i++ {
+		s = strings.ReplaceAll(s, "[long-break][long-break]", "[long-break]")
+		s = strings.ReplaceAll(s, "[long-break][break]", "[long-break]")
+		s = strings.ReplaceAll(s, "[break][long-break]", "[long-break]")
+		s = strings.ReplaceAll(s, "[break][break]", "[break]")
+	}
+	return s
 }
 
 func initWorkshopWorker(ctx context.Context, db *sql.DB, cfg AppConfig, pool *UpstreamPool) {

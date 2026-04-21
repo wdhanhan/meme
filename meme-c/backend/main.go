@@ -127,71 +127,140 @@ func (ri *referenceIndex) apisForReference(refID string) []string {
 
 const fishErrLogPath = "/root/meme/logs/fish-s2-pro.err.log"
 
-// segmentTextLocalChunks 按标点优先、每段不超过 maxRunes 字切分（无外部 API）。
-func segmentTextLocalChunks(text string, maxRunes int) []string {
-	if maxRunes <= 0 {
-		maxRunes = 130
+// pausePriority ranks punctuation by how natural a sentence break is at that
+// position. Higher wins when choosing a segmentation boundary.
+//   3 → sentence-terminating (。！？.!?) or hard newline
+//   2 → clause-level (；：;:)
+//   1 → soft comma (，,)
+//   0 → serial comma (、)
+//  -1 → not a break candidate
+func pausePriority(r rune) int {
+	switch r {
+	case '。', '！', '？', '.', '!', '?', '\n':
+		return 3
+	case '；', '：', ';', ':':
+		return 2
+	case '，', ',':
+		return 1
+	case '、':
+		return 0
 	}
-	runes := []rune(strings.TrimSpace(text))
-	if len(runes) == 0 {
-		return nil
-	}
-	if len(runes) <= maxRunes {
-		return []string{strings.TrimSpace(text)}
-	}
-	var chunks []string
-	start := 0
-	for start < len(runes) {
-		end := start + maxRunes
-		if end >= len(runes) {
-			end = len(runes)
-		} else {
-		search:
-			for i := end; i > start+maxRunes/2; i-- {
-				switch runes[i-1] {
-				case '。', '！', '？', '；', '，', ',', '.', '!', '?', ';', '、':
-					end = i
-					break search
-				}
-			}
-		}
-		chunk := strings.TrimSpace(string(runes[start:end]))
-		if chunk != "" {
-			chunks = append(chunks, chunk)
-		}
-		start = end
-	}
-	return chunks
+	return -1
 }
 
-// segmentTextArrayLocal 长文本先按 2000 字块再细分，供多路 TTS。
+// chooseBoundary returns the best split index (exclusive) in [lo, hi). The
+// split means runes[prev:idx] is the segment ending at runes[idx-1]. We prefer
+// higher-priority punctuation; ties go to the split closest to ideal. If no
+// punctuation sits in the window we fall back to ideal (hard cut).
+func chooseBoundary(runes []rune, lo, hi, ideal int) int {
+	if lo < 1 {
+		lo = 1
+	}
+	if hi > len(runes) {
+		hi = len(runes)
+	}
+	if lo >= hi {
+		if ideal > len(runes) {
+			return len(runes)
+		}
+		return ideal
+	}
+	best := -1
+	bestPri := -1
+	bestDist := 1 << 30
+	for p := lo; p < hi; p++ {
+		pri := pausePriority(runes[p-1])
+		if pri < 0 {
+			continue
+		}
+		d := p - ideal
+		if d < 0 {
+			d = -d
+		}
+		if pri > bestPri || (pri == bestPri && d < bestDist) {
+			best, bestPri, bestDist = p, pri, d
+		}
+	}
+	if best < 0 {
+		return ideal
+	}
+	return best
+}
+
+// segmentTextEqualized splits text into near-equal-length pieces. It first
+// picks a segment count k ≈ N / targetAvg, then snaps each of the k-1 ideal
+// boundaries to the best punctuation within ±window runes. Segment lengths
+// end up in roughly [targetAvg - window, targetAvg + window] — a much tighter
+// distribution than the old greedy "take up to maxRunes, search back for any
+// punct" approach (which ranged from targetAvg/2 to targetAvg).
+func segmentTextEqualized(text string, targetAvg int) []string {
+	if targetAvg <= 0 {
+		targetAvg = 130
+	}
+	runes := []rune(strings.TrimSpace(text))
+	n := len(runes)
+	if n == 0 {
+		return nil
+	}
+	// Round to nearest: prefer fewer, slightly-over-target segments over many
+	// short ones — so 165 runes stays as one rather than becoming two 82s.
+	k := (n + targetAvg/2) / targetAvg
+	if k < 1 {
+		k = 1
+	}
+	if k == 1 {
+		return []string{strings.TrimSpace(text)}
+	}
+	window := targetAvg / 3
+	if window < 20 {
+		window = 20
+	}
+
+	out := make([]string, 0, k)
+	prev := 0
+	for i := 1; i < k; i++ {
+		ideal := i * n / k
+		lo := prev + 1
+		if ideal-window > lo {
+			lo = ideal - window
+		}
+		hi := ideal + window
+		if hi > n {
+			hi = n
+		}
+		b := chooseBoundary(runes, lo, hi, ideal)
+		if b <= prev {
+			b = prev + 1
+		}
+		if b > n {
+			b = n
+		}
+		chunk := strings.TrimSpace(string(runes[prev:b]))
+		if chunk != "" {
+			out = append(out, chunk)
+		}
+		prev = b
+	}
+	if prev < n {
+		tail := strings.TrimSpace(string(runes[prev:]))
+		if tail != "" {
+			out = append(out, tail)
+		}
+	}
+	return out
+}
+
+// segmentTextArrayLocal 等长分段，供多路 TTS。
 func segmentTextArrayLocal(text string) ([]string, error) {
 	text = strings.TrimSpace(text)
 	if text == "" {
 		return nil, fmt.Errorf("empty text")
 	}
-	const maxRunes = 2000
-	runes := []rune(text)
-	if len(runes) <= maxRunes {
-		return segmentTextLocalChunks(text, 130), nil
-	}
-	var all []string
-	for start := 0; start < len(runes); start += maxRunes {
-		end := start + maxRunes
-		if end > len(runes) {
-			end = len(runes)
-		}
-		part := strings.TrimSpace(string(runes[start:end]))
-		if part == "" {
-			continue
-		}
-		sub := segmentTextLocalChunks(part, 130)
-		all = append(all, sub...)
-	}
-	if len(all) == 0 {
+	segs := segmentTextEqualized(text, 130)
+	if len(segs) == 0 {
 		return []string{text}, nil
 	}
-	return all, nil
+	return segs, nil
 }
 
 // segmentTextArrayWithLocalBreath 本地分段后在标点后插入 Fish 气口标签（[break] / [long-break]）。
