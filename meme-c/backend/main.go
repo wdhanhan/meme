@@ -741,7 +741,8 @@ func main() {
 	registerClusterRoutes(r, db)
 	registerAdminRoutes(r, db, pool)
 	pool.StartReconciler(db, 10*time.Second)
-	pool.StartHealthChecker(10*time.Second, 2*time.Second)
+	healthProbeTimeout := time.Duration(envIntOrDefault("HEALTH_PROBE_TIMEOUT_SEC", 5)) * time.Second
+	pool.StartHealthChecker(10*time.Second, healthProbeTimeout)
 	initWorkshopWorker(workerCtx, db, cfg, pool)
 	registerWorkshopRoutes(r, db)
 	registerVoiceRoutes(r, db, cfg, pool)

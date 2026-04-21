@@ -39,13 +39,21 @@ type UpstreamStat struct {
 	InFlightCount int            `json:"in_flight_count"`
 	InFlight      *InFlightInfo  `json:"in_flight,omitempty"` // 首槽快照，兼容旧前端
 	InFlights     []InFlightInfo `json:"in_flights,omitempty"`
+	FailStreak    int            `json:"fail_streak"`
+	LastSuccessAt time.Time      `json:"last_success_at,omitempty"`
 }
 
 type upstreamHealth struct {
-	ok        bool
-	lastCheck time.Time
-	lastErr   string
+	ok          bool
+	lastCheck   time.Time
+	lastErr     string
+	failStreak  int       // 连续失败次数，>= healthFailDropThreshold 才踢出调度
+	lastSuccess time.Time // 最近一次成功的时间，方便判断"刚恢复"
 }
+
+// 连续失败多少次才真正从调度候选里剔除。偶发 1~2 次失败不影响派单，
+// 避免探活瞬时抖动（GPU 正忙、Tailscale RTT 尖刺）把健康卡误拉黑。
+const healthFailDropThreshold = 3
 
 // UpstreamPool owns the live set of fish TTS upstream APIs and their worker
 // queues. Static APIs (from env FISH_API_BASES) are always kept; dynamic APIs
@@ -201,6 +209,8 @@ func (p *UpstreamPool) Stats() []UpstreamStat {
 			stats[i].Healthy = h.ok
 			stats[i].LastCheckAt = h.lastCheck
 			stats[i].LastError = h.lastErr
+			stats[i].FailStreak = h.failStreak
+			stats[i].LastSuccessAt = h.lastSuccess
 		}
 	}
 	p.healthMu.RUnlock()
@@ -236,8 +246,17 @@ func (p *UpstreamPool) runHealthRound(timeout time.Duration) {
 		go func(api string) {
 			defer wg.Done()
 			ok, errMsg := probeUpstream(probeClient, api)
+			now := time.Now()
 			p.healthMu.Lock()
-			p.health[api] = upstreamHealth{ok: ok, lastCheck: time.Now(), lastErr: errMsg}
+			prev := p.health[api]
+			cur := upstreamHealth{ok: ok, lastCheck: now, lastErr: errMsg, lastSuccess: prev.lastSuccess}
+			if ok {
+				cur.failStreak = 0
+				cur.lastSuccess = now
+			} else {
+				cur.failStreak = prev.failStreak + 1
+			}
+			p.health[api] = cur
 			p.healthMu.Unlock()
 		}(api)
 	}
@@ -259,8 +278,11 @@ func (p *UpstreamPool) runHealthRound(timeout time.Duration) {
 	p.healthMu.Unlock()
 }
 
+// probeUpstream 用 fish-speech 自带的轻量 /v1/health 判断存活，比 /v1/references/list
+// 便宜得多（不需要序列化所有音色），减少 GPU 忙碌时的误报。
+// 老版本 fish-speech 没有 /v1/health 会返回 404，这里仍算健康——只要能回响应就说明进程活着。
 func probeUpstream(client *http.Client, api string) (bool, string) {
-	url := strings.TrimRight(api, "/") + "/v1/references/list?format=json"
+	url := strings.TrimRight(api, "/") + "/v1/health"
 	resp, err := client.Get(url)
 	if err != nil {
 		return false, err.Error()
@@ -281,6 +303,8 @@ func (p *UpstreamPool) QueueFor(api string) (chan ttsJob, bool) {
 
 // filterHealthy drops upstreams that have been probed and found unreachable.
 // Upstreams with no probe yet (bootstrap) are kept so first-round traffic still flows.
+// 只有在连续失败 >= healthFailDropThreshold 次时才踢出调度，单次抖动（例如 GPU
+// 正忙、Tailscale RTT 尖刺）不影响派单，避免误杀。
 // Lock order: always acquire p.mu before p.healthMu to match Stats().
 func (p *UpstreamPool) filterHealthy(apis []string) []string {
 	p.healthMu.RLock()
@@ -288,7 +312,7 @@ func (p *UpstreamPool) filterHealthy(apis []string) []string {
 	out := make([]string, 0, len(apis))
 	for _, api := range apis {
 		h, ok := p.health[api]
-		if ok && !h.lastCheck.IsZero() && !h.ok {
+		if ok && !h.lastCheck.IsZero() && !h.ok && h.failStreak >= healthFailDropThreshold {
 			continue
 		}
 		out = append(out, api)

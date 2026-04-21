@@ -97,6 +97,8 @@ type GPUCard struct {
 	InFlightCount int            `json:"in_flight_count"`
 	InFlight      *InFlightInfo  `json:"in_flight,omitempty"`
 	InFlights     []InFlightInfo `json:"in_flights,omitempty"`
+	FailStreak    int            `json:"fail_streak"`
+	LastSuccessAt time.Time      `json:"last_success_at,omitempty"`
 }
 
 type NodeSummary struct {
@@ -176,6 +178,8 @@ func buildGPUDashboard(db *sql.DB, pool *UpstreamPool) GPUDashboard {
 			InFlightCount: s.InFlightCount,
 			InFlight:      s.InFlight,
 			InFlights:     s.InFlights,
+			FailStreak:    s.FailStreak,
+			LastSuccessAt: s.LastSuccessAt,
 			Busy:          s.InFlightCount > 0,
 		}
 		if m, ok := urlMeta[s.API]; ok {
