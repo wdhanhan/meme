@@ -22,12 +22,13 @@ import (
 )
 
 type AppConfig struct {
-	ListenAddr   string
-	FishAPIs     []string
-	TimeoutSec   int
-	MaxNewTokens int
-	QueueSize    int
-	DBDsn        string
+	ListenAddr        string
+	FishAPIs          []string
+	TimeoutSec        int
+	MaxNewTokens      int
+	QueueSize         int
+	PerGPUConcurrency int
+	DBDsn             string
 }
 
 type TTSRequest struct {
@@ -524,7 +525,7 @@ func parseFishAPIs() []string {
 	return []string{envOrDefault("FISH_API_BASE", "http://127.0.0.1:8080")}
 }
 
-func runTTSWorker(ctx context.Context, fishAPI string, queue chan ttsJob, client *http.Client, pool *UpstreamPool) {
+func runTTSWorker(ctx context.Context, fishAPI string, slot int, queue chan ttsJob, client *http.Client, pool *UpstreamPool) {
 	for {
 		select {
 		case <-ctx.Done():
@@ -533,7 +534,7 @@ func runTTSWorker(ctx context.Context, fishAPI string, queue chan ttsJob, client
 			if !ok {
 				return
 			}
-			pool.BeginJob(fishAPI, job.meta)
+			pool.BeginJob(fishAPI, slot, job.meta)
 			selectedAPI := fishAPI
 			upstreamURL := fmt.Sprintf("%s/v1/tts", fishAPI)
 			resp, body, err := doJSONPost(client, upstreamURL, job.payload)
@@ -589,7 +590,7 @@ func runTTSWorker(ctx context.Context, fishAPI string, queue chan ttsJob, client
 			default:
 				// 请求方已取消，丢弃结果避免 worker 阻塞。
 			}
-			pool.EndJob(fishAPI)
+			pool.EndJob(fishAPI, slot)
 		}
 	}
 }
@@ -701,11 +702,12 @@ func streamFromUpstream(c *gin.Context, client *http.Client, upstreamURL string,
 
 func main() {
 	cfg := AppConfig{
-		ListenAddr:   envOrDefault("MEMEC_BACKEND_LISTEN", "127.0.0.1:8090"),
-		FishAPIs:     parseFishAPIs(),
-		TimeoutSec:   envIntOrDefault("HTTP_TIMEOUT_SEC", 300),
-		MaxNewTokens: envIntOrDefault("DEFAULT_MAX_NEW_TOKENS", 1024),
-		QueueSize:    envIntOrDefault("TTS_QUEUE_SIZE", 64),
+		ListenAddr:        envOrDefault("MEMEC_BACKEND_LISTEN", "127.0.0.1:8090"),
+		FishAPIs:          parseFishAPIs(),
+		TimeoutSec:        envIntOrDefault("HTTP_TIMEOUT_SEC", 300),
+		MaxNewTokens:      envIntOrDefault("DEFAULT_MAX_NEW_TOKENS", 1024),
+		QueueSize:         envIntOrDefault("TTS_QUEUE_SIZE", 64),
+		PerGPUConcurrency: envIntOrDefault("TTS_PER_GPU_CONCURRENCY", 2),
 		DBDsn: envOrDefault(
 			"MEMEC_POSTGRES_DSN",
 			"postgres://memec:memec@127.0.0.1:5432/memec?sslmode=disable",
@@ -718,7 +720,7 @@ func main() {
 	}
 	workerCtx, workerCancel := context.WithCancel(context.Background())
 	defer workerCancel()
-	pool := NewUpstreamPool(workerCtx, cfg.FishAPIs, cfg.QueueSize, client)
+	pool := NewUpstreamPool(workerCtx, cfg.FishAPIs, cfg.QueueSize, cfg.PerGPUConcurrency, client)
 	refs := pool.Refs()
 
 	loadGenerationsFromDisk()

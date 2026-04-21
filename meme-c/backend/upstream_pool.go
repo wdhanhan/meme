@@ -28,14 +28,17 @@ type InFlightInfo struct {
 
 // UpstreamStat is a snapshot of one upstream's scheduling state.
 type UpstreamStat struct {
-	API         string        `json:"upstream"`
-	QueueLen    int           `json:"queue_len"`
-	QueueCap    int           `json:"queue_cap"`
-	IsStatic    bool          `json:"is_static"`
-	Healthy     bool          `json:"healthy"`
-	LastCheckAt time.Time     `json:"last_check_at,omitempty"`
-	LastError   string        `json:"last_error,omitempty"`
-	InFlight    *InFlightInfo `json:"in_flight,omitempty"`
+	API           string         `json:"upstream"`
+	QueueLen      int            `json:"queue_len"`
+	QueueCap      int            `json:"queue_cap"`
+	IsStatic      bool           `json:"is_static"`
+	Healthy       bool           `json:"healthy"`
+	LastCheckAt   time.Time      `json:"last_check_at,omitempty"`
+	LastError     string         `json:"last_error,omitempty"`
+	Concurrency   int            `json:"concurrency"`
+	InFlightCount int            `json:"in_flight_count"`
+	InFlight      *InFlightInfo  `json:"in_flight,omitempty"` // 首槽快照，兼容旧前端
+	InFlights     []InFlightInfo `json:"in_flights,omitempty"`
 }
 
 type upstreamHealth struct {
@@ -56,28 +59,34 @@ type UpstreamPool struct {
 	isStatic map[string]bool
 
 	inFlightMu sync.RWMutex
-	inFlight   map[string]InFlightInfo
+	inFlight   map[string]map[int]InFlightInfo
 
 	healthMu sync.RWMutex
 	health   map[string]upstreamHealth
 
-	refs      *referenceIndex
-	client    *http.Client
-	parentCtx context.Context
-	queueSize int
+	refs              *referenceIndex
+	client            *http.Client
+	parentCtx         context.Context
+	queueSize         int
+	perGPUConcurrency int
+	rr                uint64 // 空闲打平用的轮询计数器
 }
 
-func NewUpstreamPool(ctx context.Context, staticAPIs []string, queueSize int, client *http.Client) *UpstreamPool {
+func NewUpstreamPool(ctx context.Context, staticAPIs []string, queueSize, perGPUConcurrency int, client *http.Client) *UpstreamPool {
+	if perGPUConcurrency < 1 {
+		perGPUConcurrency = 1
+	}
 	p := &UpstreamPool{
-		queues:    make(map[string]chan ttsJob),
-		cancels:   make(map[string]context.CancelFunc),
-		isStatic:  make(map[string]bool),
-		inFlight:  make(map[string]InFlightInfo),
-		health:    make(map[string]upstreamHealth),
-		refs:      newReferenceIndex(nil),
-		client:    client,
-		parentCtx: ctx,
-		queueSize: queueSize,
+		queues:            make(map[string]chan ttsJob),
+		cancels:           make(map[string]context.CancelFunc),
+		isStatic:          make(map[string]bool),
+		inFlight:          make(map[string]map[int]InFlightInfo),
+		health:            make(map[string]upstreamHealth),
+		refs:              newReferenceIndex(nil),
+		client:            client,
+		parentCtx:         ctx,
+		queueSize:         queueSize,
+		perGPUConcurrency: perGPUConcurrency,
 	}
 	for _, api := range dedupeNonEmpty(staticAPIs) {
 		p.isStatic[api] = true
@@ -85,6 +94,9 @@ func NewUpstreamPool(ctx context.Context, staticAPIs []string, queueSize int, cl
 	}
 	return p
 }
+
+// PerGPUConcurrency 暴露给外部统计用。
+func (p *UpstreamPool) PerGPUConcurrency() int { return p.perGPUConcurrency }
 
 func (p *UpstreamPool) Snapshot() []string {
 	p.mu.RLock()
@@ -96,21 +108,40 @@ func (p *UpstreamPool) Snapshot() []string {
 
 func (p *UpstreamPool) Refs() *referenceIndex { return p.refs }
 
-func (p *UpstreamPool) BeginJob(api string, info InFlightInfo) {
+// BeginJob 记录某个 GPU 上某个 worker 槽开始执行的任务。slot 是 worker 在本 GPU 上的序号，
+// 和 perGPUConcurrency 一一对应，这样同一张卡多个并发任务不会互相覆盖。
+func (p *UpstreamPool) BeginJob(api string, slot int, info InFlightInfo) {
 	info.StartedAt = time.Now()
 	p.inFlightMu.Lock()
-	p.inFlight[api] = info
+	slots, ok := p.inFlight[api]
+	if !ok {
+		slots = make(map[int]InFlightInfo, p.perGPUConcurrency)
+		p.inFlight[api] = slots
+	}
+	slots[slot] = info
 	p.inFlightMu.Unlock()
 }
 
-func (p *UpstreamPool) EndJob(api string) {
+func (p *UpstreamPool) EndJob(api string, slot int) {
 	p.inFlightMu.Lock()
-	delete(p.inFlight, api)
+	if slots, ok := p.inFlight[api]; ok {
+		delete(slots, slot)
+		if len(slots) == 0 {
+			delete(p.inFlight, api)
+		}
+	}
 	p.inFlightMu.Unlock()
+}
+
+// inFlightCountLocked 需要调用者持有 inFlightMu 读锁。
+func (p *UpstreamPool) inFlightCount(api string) int {
+	p.inFlightMu.RLock()
+	defer p.inFlightMu.RUnlock()
+	return len(p.inFlight[api])
 }
 
 // Stats returns a consistent snapshot of every upstream: queue depth, cap,
-// whether it's static, and the job currently being processed (if any).
+// whether it's static, and the jobs currently being processed (if any).
 func (p *UpstreamPool) Stats() []UpstreamStat {
 	p.mu.RLock()
 	apis := make([]string, len(p.apis))
@@ -119,9 +150,10 @@ func (p *UpstreamPool) Stats() []UpstreamStat {
 	for _, api := range apis {
 		q := p.queues[api]
 		s := UpstreamStat{
-			API:      api,
-			IsStatic: p.isStatic[api],
-			QueueCap: p.queueSize,
+			API:         api,
+			IsStatic:    p.isStatic[api],
+			QueueCap:    p.queueSize,
+			Concurrency: p.perGPUConcurrency,
 		}
 		if q != nil {
 			s.QueueLen = len(q)
@@ -132,10 +164,24 @@ func (p *UpstreamPool) Stats() []UpstreamStat {
 
 	p.inFlightMu.RLock()
 	for i := range stats {
-		if info, ok := p.inFlight[stats[i].API]; ok {
-			cp := info
-			stats[i].InFlight = &cp
+		slots, ok := p.inFlight[stats[i].API]
+		if !ok || len(slots) == 0 {
+			continue
 		}
+		// 按 slot 序号稳定输出，避免 UI 抖动。
+		keys := make([]int, 0, len(slots))
+		for k := range slots {
+			keys = append(keys, k)
+		}
+		sort.Ints(keys)
+		list := make([]InFlightInfo, 0, len(keys))
+		for _, k := range keys {
+			list = append(list, slots[k])
+		}
+		stats[i].InFlightCount = len(list)
+		stats[i].InFlights = list
+		first := list[0]
+		stats[i].InFlight = &first
 	}
 	p.inFlightMu.RUnlock()
 
@@ -241,7 +287,8 @@ func (p *UpstreamPool) filterHealthy(apis []string) []string {
 }
 
 // ChooseForTTS picks the best API under a single lock so queue existence and
-// load-balance decision stay consistent. Returns (api, queue, ok).
+// load-balance decision stay consistent. 打分 = 队列中等待数 + 当前在跑数量，
+// 并列时用轮询计数器打破平局，避免空闲时永远挤到字母序最靠前的那张卡。
 func (p *UpstreamPool) ChooseForTTS(req TTSRequest, rr *uint64) (string, chan ttsJob, bool) {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
@@ -260,19 +307,33 @@ func (p *UpstreamPool) ChooseForTTS(req TTSRequest, rr *uint64) (string, chan tt
 	if len(candidates) == 0 {
 		return "", nil, false
 	}
-	chosen := candidates[0]
-	minLen := len(p.queues[chosen])
-	for _, api := range candidates[1:] {
+
+	type scored struct {
+		api   string
+		score int
+	}
+	best := make([]scored, 0, 4)
+	minScore := -1
+	for _, api := range candidates {
 		q := p.queues[api]
 		if q == nil {
 			continue
 		}
-		if qlen := len(q); qlen < minLen {
-			chosen = api
-			minLen = qlen
+		score := len(q) + p.inFlightCount(api)
+		if minScore < 0 || score < minScore {
+			minScore = score
+			best = best[:0]
+			best = append(best, scored{api, score})
+		} else if score == minScore {
+			best = append(best, scored{api, score})
 		}
 	}
-	_ = atomic.AddUint64(rr, 1) // keep rr advancing for fallback paths
+	if len(best) == 0 {
+		return "", nil, false
+	}
+	// 对 rr 始终 +1，使打平时调度真正轮转。
+	idx := atomic.AddUint64(rr, 1)
+	chosen := best[int(idx%uint64(len(best)))].api
 	q := p.queues[chosen]
 	return chosen, q, q != nil
 }
@@ -341,7 +402,11 @@ func (p *UpstreamPool) addLocked(api string) {
 	p.queues[api] = queue
 	p.cancels[api] = cancel
 	p.rebuildAPIsLocked()
-	go runTTSWorker(ctx, api, queue, p.client, p)
+	// 每张 GPU 起 perGPUConcurrency 个 worker，共享同一条队列；fish-speech 单卡
+	// 若支持并发推理，吞吐可随 worker 数线性上涨。
+	for slot := 0; slot < p.perGPUConcurrency; slot++ {
+		go runTTSWorker(ctx, api, slot, queue, p.client, p)
+	}
 	if p.client != nil {
 		go p.fetchReferencesAsync(api)
 	}

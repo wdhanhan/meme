@@ -79,21 +79,24 @@ func issueAdminJWT(username string) (string, error) {
 // ─── GPU dashboard types ─────────────────────────────────────────────────────
 
 type GPUCard struct {
-	Upstream    string        `json:"upstream"`
-	NodeID      string        `json:"node_id"`
-	TailscaleIP string        `json:"tailscale_ip"`
-	GPUIndex    int           `json:"gpu_index"`
-	Region      string        `json:"region"`
-	NodeStatus  string        `json:"node_status"` // active | stale | dead | static
-	LastSeenAt  time.Time     `json:"last_seen_at"`
-	IsStatic    bool          `json:"is_static"`
-	QueueLen    int           `json:"queue_len"`
-	QueueCap    int           `json:"queue_cap"`
-	Healthy     bool          `json:"healthy"`
-	LastCheckAt time.Time     `json:"last_check_at,omitempty"`
-	LastError   string        `json:"last_error,omitempty"`
-	Busy        bool          `json:"busy"`
-	InFlight    *InFlightInfo `json:"in_flight,omitempty"`
+	Upstream      string         `json:"upstream"`
+	NodeID        string         `json:"node_id"`
+	TailscaleIP   string         `json:"tailscale_ip"`
+	GPUIndex      int            `json:"gpu_index"`
+	Region        string         `json:"region"`
+	NodeStatus    string         `json:"node_status"` // active | stale | dead | static
+	LastSeenAt    time.Time      `json:"last_seen_at"`
+	IsStatic      bool           `json:"is_static"`
+	QueueLen      int            `json:"queue_len"`
+	QueueCap      int            `json:"queue_cap"`
+	Healthy       bool           `json:"healthy"`
+	LastCheckAt   time.Time      `json:"last_check_at,omitempty"`
+	LastError     string         `json:"last_error,omitempty"`
+	Busy          bool           `json:"busy"`
+	Concurrency   int            `json:"concurrency"`
+	InFlightCount int            `json:"in_flight_count"`
+	InFlight      *InFlightInfo  `json:"in_flight,omitempty"`
+	InFlights     []InFlightInfo `json:"in_flights,omitempty"`
 }
 
 type NodeSummary struct {
@@ -162,15 +165,18 @@ func buildGPUDashboard(db *sql.DB, pool *UpstreamPool) GPUDashboard {
 
 	for _, s := range stats {
 		card := GPUCard{
-			Upstream:    s.API,
-			QueueLen:    s.QueueLen,
-			QueueCap:    s.QueueCap,
-			IsStatic:    s.IsStatic,
-			Healthy:     s.Healthy,
-			LastCheckAt: s.LastCheckAt,
-			LastError:   s.LastError,
-			InFlight:    s.InFlight,
-			Busy:        s.InFlight != nil,
+			Upstream:      s.API,
+			QueueLen:      s.QueueLen,
+			QueueCap:      s.QueueCap,
+			IsStatic:      s.IsStatic,
+			Healthy:       s.Healthy,
+			LastCheckAt:   s.LastCheckAt,
+			LastError:     s.LastError,
+			Concurrency:   s.Concurrency,
+			InFlightCount: s.InFlightCount,
+			InFlight:      s.InFlight,
+			InFlights:     s.InFlights,
+			Busy:          s.InFlightCount > 0,
 		}
 		if m, ok := urlMeta[s.API]; ok {
 			card.NodeID = m.node.NodeID
