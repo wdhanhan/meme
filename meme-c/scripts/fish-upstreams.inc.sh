@@ -17,7 +17,11 @@ fish_compute_fish_api_bases() {
     GPU_COUNT=1
   fi
 
-  if [[ -n "${FISH_API_BASES:-}" ]]; then
+  # Only honor a caller-supplied FISH_API_BASES when it's explicitly pinned.
+  # Otherwise we always recompute from the current GPU count so env cannot
+  # drift past a hardware change (e.g., image baked with 8 entries, then
+  # deployed to a 1-GPU box).
+  if [[ "${FISH_API_BASES_PINNED:-0}" == "1" && -n "${FISH_API_BASES:-}" ]]; then
     return 0
   fi
 

@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react'
+import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import './styles.css'
 
@@ -10,37 +10,306 @@ function fmtMs(v) {
   if (n >= 1000) return `${(n / 1000).toFixed(2)}s`
   return `${n}ms`
 }
-
 function parseNum(v) {
   const n = Number(v)
   return Number.isFinite(n) ? n : 0
 }
-
 function fmtTime(iso) {
   if (!iso) return '—'
   const d = new Date(iso)
   const pad = (x) => String(x).padStart(2, '0')
   return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
 }
-
+function fmtShortTime(iso) {
+  if (!iso) return '—'
+  const d = new Date(iso)
+  const pad = (x) => String(x).padStart(2, '0')
+  return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
+}
+function fmtElapsed(sec) {
+  if (sec < 0) sec = 0
+  if (sec < 60) return `${sec.toFixed(1)}s`
+  const m = Math.floor(sec / 60)
+  const s = Math.floor(sec % 60)
+  return `${m}m${String(s).padStart(2, '0')}s`
+}
 function avg(arr) {
   const valid = arr.filter(Number.isFinite)
   if (!valid.length) return null
   return Math.round(valid.reduce((a, b) => a + b, 0) / valid.length)
 }
 
-// ── StatsCard ─────────────────────────────────────────────────────────────────
-function StatsCard({ label, value, sub, accent }) {
+// ── auth helpers ─────────────────────────────────────────────────────────────
+const JWT_KEY = 'memec_admin_jwt'
+const USER_KEY = 'memec_admin_user'
+function getJwt() { return localStorage.getItem(JWT_KEY) || '' }
+function setJwt(t) {
+  if (t) localStorage.setItem(JWT_KEY, t)
+  else localStorage.removeItem(JWT_KEY)
+}
+function getAdminUser() { return localStorage.getItem(USER_KEY) || '' }
+function setAdminUser(u) {
+  if (u) localStorage.setItem(USER_KEY, u)
+  else localStorage.removeItem(USER_KEY)
+}
+
+async function adminFetch(url, opts = {}) {
+  const headers = { ...(opts.headers || {}) }
+  const jwt = getJwt()
+  if (jwt) headers['Authorization'] = `Bearer ${jwt}`
+  const r = await fetch(url, { ...opts, headers })
+  if (r.status === 401) {
+    // 仅当使用过 JWT 时才清空登录状态。
+    if (jwt) { setJwt(''); setAdminUser('') }
+    const err = new Error('unauthorized')
+    err.status = 401
+    throw err
+  }
+  return r
+}
+
+// ── Login ────────────────────────────────────────────────────────────────────
+function LoginScreen({ onLoggedIn }) {
+  const [username, setUsername] = useState('admin')
+  const [password, setPassword] = useState('')
+  const [err, setErr] = useState('')
+  const [busy, setBusy] = useState(false)
+
+  async function submit(e) {
+    e.preventDefault()
+    setErr(''); setBusy(true)
+    try {
+      const r = await fetch('/api/admin/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username, password }),
+      })
+      const j = await r.json().catch(() => ({}))
+      if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`)
+      setJwt(j.token)
+      setAdminUser(j.user?.username || username)
+      onLoggedIn()
+    } catch (e) {
+      setErr(e.message || String(e))
+    } finally {
+      setBusy(false)
+    }
+  }
   return (
-    <div className={`stat-card ${accent || ''}`}>
-      <div className="stat-value">{value}</div>
-      <div className="stat-label">{label}</div>
-      {sub && <div className="stat-sub">{sub}</div>}
+    <div className="login-page">
+      <form className="login-card" onSubmit={submit}>
+        <div className="login-logo">M</div>
+        <h1 className="login-title">Meme C 管理后台</h1>
+        <p className="login-sub">请使用管理员账号登录</p>
+        <label className="login-label">账号</label>
+        <input className="login-input" value={username} onChange={(e) => setUsername(e.target.value)}
+          autoFocus autoComplete="username" />
+        <label className="login-label">密码</label>
+        <input className="login-input" type="password" value={password} onChange={(e) => setPassword(e.target.value)}
+          autoComplete="current-password" />
+        {err && <div className="alert-error" style={{ marginTop: 10, marginBottom: 0 }}>{err}</div>}
+        <button className="btn-primary" type="submit" disabled={busy}>
+          {busy ? '登录中…' : '登录'}
+        </button>
+      </form>
     </div>
   )
 }
 
-// ── TrainingCard ──────────────────────────────────────────────────────────────
+// ── GPU Dashboard ────────────────────────────────────────────────────────────
+function nodeStatusBadge(status) {
+  if (status === 'active') return { cls: 'badge-green', label: '活跃' }
+  if (status === 'static') return { cls: 'badge-blue', label: '本地' }
+  if (status === 'stale') return { cls: 'badge-amber', label: '离线中' }
+  if (status === 'dead') return { cls: 'badge-red', label: '离线' }
+  return { cls: 'badge-gray', label: status || 'unknown' }
+}
+
+function GPUCardView({ gpu, now }) {
+  const { node_status } = gpu
+  const probed = !!gpu.last_check_at
+  const unreachable = probed && !gpu.healthy
+  const dotClass = unreachable ? 'dot-fail'
+    : gpu.busy ? 'dot-busy'
+    : (node_status === 'active' || node_status === 'static') ? 'dot-ok'
+    : node_status === 'stale' ? 'dot-stale' : 'dot-fail'
+  const qPct = gpu.queue_cap > 0 ? Math.min(100, Math.round((gpu.queue_len / gpu.queue_cap) * 100)) : 0
+  const inf = gpu.in_flight
+  let elapsedSec = 0
+  let progressPct = 0
+  if (inf) {
+    const started = new Date(inf.started_at).getTime()
+    elapsedSec = Math.max(0, (now - started) / 1000)
+    if (inf.seg_total > 0) {
+      progressPct = Math.min(100, Math.round(((inf.seg_index + 0.5) / inf.seg_total) * 100))
+    }
+  }
+  return (
+    <div className={`gpu-card ${gpu.busy ? 'gpu-busy' : ''} ${unreachable ? 'gpu-down' : ''}`}>
+      <div className="gpu-head">
+        <span className={`status-dot ${dotClass}`} />
+        <span className="gpu-title">{gpu.node_id}{gpu.gpu_index !== undefined ? ` · GPU#${gpu.gpu_index}` : ''}</span>
+        {unreachable
+          ? <span className="badge badge-red">连接失败</span>
+          : <span className={`badge ${nodeStatusBadge(node_status).cls}`}>{nodeStatusBadge(node_status).label}</span>
+        }
+      </div>
+      <div className="gpu-upstream" title={gpu.upstream}>{gpu.upstream}</div>
+      <div className="gpu-meta-row">
+        <span className="gpu-meta">队列 {gpu.queue_len}/{gpu.queue_cap}</span>
+        {gpu.region && <span className="gpu-meta">{gpu.region}</span>}
+        {gpu.last_check_at && (
+          <span className={`gpu-meta ${unreachable ? 'txt-red' : 'muted'}`}>
+            探活 {fmtShortTime(gpu.last_check_at)}
+          </span>
+        )}
+      </div>
+      {unreachable && gpu.last_error && (
+        <div className="gpu-down-msg" title={gpu.last_error}>{gpu.last_error}</div>
+      )}
+      <div className="queue-track">
+        <div className={`queue-fill ${qPct > 60 ? 'queue-fill-hot' : ''}`} style={{ width: `${qPct}%` }} />
+      </div>
+
+      {inf ? (
+        <div className="gpu-task">
+          <div className="gpu-task-head">
+            <span className="badge badge-blue">{inf.task_kind || 'tts'}</span>
+            <span className="gpu-task-id" title={inf.task_id}>
+              任务 {String(inf.task_id || '').slice(-8)}
+            </span>
+            <span className="gpu-task-elapsed">{fmtElapsed(elapsedSec)}</span>
+          </div>
+          {inf.seg_total > 0 && (
+            <div className="gpu-task-seg">
+              分片 {inf.seg_index + 1}/{inf.seg_total}
+              <div className="progress-track progress-sm">
+                <div className="progress-fill" style={{ width: `${progressPct}%` }} />
+              </div>
+            </div>
+          )}
+          {inf.text_preview && (
+            <div className="gpu-task-text">{inf.text_preview}</div>
+          )}
+        </div>
+      ) : (
+        <div className="gpu-idle">空闲</div>
+      )}
+    </div>
+  )
+}
+
+function NodeSummaryCard({ node }) {
+  const st = nodeStatusBadge(node.status)
+  return (
+    <div className="node-card">
+      <div className="node-head">
+        <span className="node-title">{node.node_id}</span>
+        <span className={`badge ${st.cls}`}>{st.label}</span>
+      </div>
+      <div className="node-meta">
+        {node.region && <span>{node.region}</span>}
+        {node.tailscale_ip && <span>{node.tailscale_ip}</span>}
+      </div>
+      <div className="node-nums">
+        <div><b>{node.gpu_total}</b><span>配置</span></div>
+        <div><b>{node.gpu_healthy}</b><span>健康</span></div>
+        <div><b>{node.gpu_busy}</b><span>忙碌</span></div>
+        <div className={node.gpu_unreachable ? 'num-red' : ''}>
+          <b>{node.gpu_unreachable}</b><span>失联</span>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function GPUPanel() {
+  const [data, setData] = useState(null)
+  const [error, setError] = useState('')
+  const [now, setNow] = useState(Date.now())
+  const aliveRef = useRef(true)
+
+  async function load() {
+    try {
+      const r = await adminFetch('/api/admin/gpus')
+      const j = await r.json().catch(() => ({}))
+      if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`)
+      if (aliveRef.current) { setData(j); setError('') }
+    } catch (e) {
+      if (e.status !== 401 && aliveRef.current) setError(e.message || String(e))
+    }
+  }
+
+  useEffect(() => {
+    aliveRef.current = true
+    load()
+    const poll = setInterval(load, 2000)
+    const tick = setInterval(() => setNow(Date.now()), 500)
+    return () => { aliveRef.current = false; clearInterval(poll); clearInterval(tick) }
+  }, [])
+
+  const nodes = data?.nodes || []
+  const gpus = data?.gpus || []
+
+  return (
+    <>
+      {error && <div className="alert-error">{error}</div>}
+      <div className="stats-row">
+        <div className="stat-card accent-blue">
+          <div className="stat-value">{data ? data.total_gpus : '—'}</div>
+          <div className="stat-label">配置的 GPU</div>
+          <div className="stat-sub">{nodes.length} 个节点 · 含离线</div>
+        </div>
+        <div className="stat-card accent-green">
+          <div className="stat-value">{data ? data.healthy_gpus : '—'}</div>
+          <div className="stat-label">健康 GPU</div>
+          <div className="stat-sub">探活通过</div>
+        </div>
+        <div className="stat-card accent-purple">
+          <div className="stat-value">{data ? data.busy_gpus : '—'}</div>
+          <div className="stat-label">正在处理</div>
+          <div className="stat-sub">当前 in-flight</div>
+        </div>
+        <div className={`stat-card ${data && data.unreachable_gpus ? 'accent-red' : ''}`}>
+          <div className="stat-value">{data ? data.unreachable_gpus : '—'}</div>
+          <div className="stat-label">连接失败</div>
+          <div className="stat-sub">env 配了但连不上</div>
+        </div>
+      </div>
+
+      <section className="card">
+        <div className="card-header">
+          <h2 className="card-title">节点概览</h2>
+        </div>
+        {nodes.length === 0 ? (
+          <div className="muted center">暂无节点信息</div>
+        ) : (
+          <div className="node-grid">
+            {nodes.map((n) => <NodeSummaryCard key={n.node_id} node={n} />)}
+          </div>
+        )}
+      </section>
+
+      <section className="card">
+        <div className="card-header">
+          <h2 className="card-title">GPU 任务看板</h2>
+          <span className="muted" style={{ fontSize: 12 }}>
+            {data ? `更新于 ${fmtShortTime(data.updated_at)}` : '加载中…'} · 2s 自动刷新
+          </span>
+        </div>
+        {gpus.length === 0 ? (
+          <div className="muted center">当前 UpstreamPool 中没有可用 GPU</div>
+        ) : (
+          <div className="gpu-grid">
+            {gpus.map((g) => <GPUCardView key={g.upstream} gpu={g} now={now} />)}
+          </div>
+        )}
+      </section>
+    </>
+  )
+}
+
+// ── TrainingCard ─────────────────────────────────────────────────────────────
 function TrainingCard({ train }) {
   if (!train) return (
     <section className="card">
@@ -73,8 +342,7 @@ function TrainingCard({ train }) {
   )
 }
 
-// ── LatencyTimeline ───────────────────────────────────────────────────────────
-// Shows a proportional horizontal bar of key milestones relative to total_ms
+// ── LatencyTimeline ──────────────────────────────────────────────────────────
 function LatencyTimeline({ rec }) {
   const total = Math.max(1, parseNum(rec.total_ms))
   const milestones = [
@@ -90,12 +358,8 @@ function LatencyTimeline({ rec }) {
           if (!ms) return null
           const pct = Math.min(100, Math.round((ms / total) * 100))
           return (
-            <div
-              key={key}
-              className="timeline-marker"
-              style={{ left: `${pct}%`, '--mc': color }}
-              title={`${label}: ${fmtMs(ms)}`}
-            >
+            <div key={key} className="timeline-marker" style={{ left: `${pct}%`, '--mc': color }}
+              title={`${label}: ${fmtMs(ms)}`}>
               <div className="timeline-dot" />
               <div className="timeline-tick-label">{label}<br />{fmtMs(ms)}</div>
             </div>
@@ -107,8 +371,7 @@ function LatencyTimeline({ rec }) {
   )
 }
 
-// ── SegmentChart ──────────────────────────────────────────────────────────────
-// Horizontal stacked bars, one per segment
+// ── SegmentChart ─────────────────────────────────────────────────────────────
 function SegmentChart({ tts = [], enc = [], texts = [] }) {
   const totals = tts.map((v, i) => parseNum(v) + parseNum(enc[i]))
   const maxVal = Math.max(1, ...totals)
@@ -142,7 +405,7 @@ function SegmentChart({ tts = [], enc = [], texts = [] }) {
   )
 }
 
-// ── RecordCard ────────────────────────────────────────────────────────────────
+// ── RecordCard ───────────────────────────────────────────────────────────────
 function RecordCard({ rec }) {
   const [open, setOpen] = useState(false)
   const modeLabel = rec.mode === 'sleep' ? '睡前' : '普通'
@@ -169,30 +432,17 @@ function RecordCard({ rec }) {
           <span className="rec-chevron">{open ? '▲' : '▼'}</span>
         </div>
       </div>
-
       <div className="rec-preview">{rec.text_preview || ''}</div>
-
       <div className="rec-metrics">
-        <div className="metric">
-          <div className="metric-val">{fmtMs(rec.first_audio_ms)}</div>
-          <div className="metric-key">首包延迟</div>
-        </div>
-        <div className="metric">
-          <div className="metric-val">{fmtMs(rec.first_meta_ms)}</div>
-          <div className="metric-key">断句完成</div>
-        </div>
+        <div className="metric"><div className="metric-val">{fmtMs(rec.first_audio_ms)}</div><div className="metric-key">首包延迟</div></div>
+        <div className="metric"><div className="metric-val">{fmtMs(rec.first_meta_ms)}</div><div className="metric-key">断句完成</div></div>
         <div className="metric">
           <div className="metric-val">{dsMs ? fmtMs(dsMs) : (parseNum(rec.optimize_ms) ? fmtMs(rec.optimize_ms) : '—')}</div>
           <div className="metric-key">分段准备</div>
         </div>
-        <div className="metric">
-          <div className="metric-val">{fmtMs(rec.total_ms)}</div>
-          <div className="metric-key">总耗时</div>
-        </div>
+        <div className="metric"><div className="metric-val">{fmtMs(rec.total_ms)}</div><div className="metric-key">总耗时</div></div>
       </div>
-
       <LatencyTimeline rec={rec} />
-
       {open && (
         <div className="rec-detail">
           {rec.error && <div className="error-msg">错误：{rec.error}</div>}
@@ -215,67 +465,44 @@ function RecordCard({ rec }) {
   )
 }
 
-// ── App ───────────────────────────────────────────────────────────────────────
-function App() {
-  const [token, setToken] = useState(localStorage.getItem('memec_admin_token') || '')
-  const [train, setTrain] = useState(null)
+// ── RecordsPanel ─────────────────────────────────────────────────────────────
+function RecordsPanel() {
   const [records, setRecords] = useState([])
-  const [loading, setLoading] = useState(false)
+  const [train, setTrain] = useState(null)
   const [error, setError] = useState('')
-  const [lastRefresh, setLastRefresh] = useState(null)
   const [filterMode, setFilterMode] = useState('all')
   const [sortKey, setSortKey] = useState('time')
+  const aliveRef = useRef(true)
 
-  const headers = useMemo(() => {
-    const h = {}
-    if (token.trim()) h['X-Admin-Token'] = token.trim()
-    return h
-  }, [token])
-
-  useEffect(() => {
-    localStorage.setItem('memec_admin_token', token)
-  }, [token])
-
-  async function loadTraining() {
-    const r = await fetch('/api/admin/training', { headers })
-    const j = await r.json().catch(() => ({}))
-    if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`)
-    setTrain(j)
-  }
-
-  async function loadGenerations() {
-    const r = await fetch('/api/admin/generations?limit=100', { headers })
-    const j = await r.json().catch(() => ({}))
-    if (!r.ok) throw new Error(j.error || j.hint || `HTTP ${r.status}`)
-    setRecords(Array.isArray(j.items) ? j.items : [])
-  }
-
-  async function refreshAll() {
-    setLoading(true)
-    setError('')
+  async function loadGen() {
     try {
-      await Promise.all([loadTraining(), loadGenerations()])
-      setLastRefresh(new Date())
+      const r = await adminFetch('/api/admin/generations?limit=100')
+      const j = await r.json().catch(() => ({}))
+      if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`)
+      if (aliveRef.current) setRecords(Array.isArray(j.items) ? j.items : [])
     } catch (e) {
-      setError(e.message || String(e))
-    } finally {
-      setLoading(false)
+      if (e.status !== 401 && aliveRef.current) setError(e.message || String(e))
+    }
+  }
+  async function loadTrain() {
+    try {
+      const r = await adminFetch('/api/admin/training')
+      const j = await r.json().catch(() => ({}))
+      if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`)
+      if (aliveRef.current) setTrain(j)
+    } catch (e) {
+      if (e.status !== 401 && aliveRef.current) setError(e.message || String(e))
     }
   }
 
   useEffect(() => {
-    refreshAll()
-    const t1 = setInterval(() => {
-      loadTraining().catch((e) => setError(e.message || String(e)))
-    }, 4000)
-    const t2 = setInterval(() => {
-      loadGenerations().catch((e) => setError(e.message || String(e)))
-      setLastRefresh(new Date())
-    }, 10000)
-    return () => { clearInterval(t1); clearInterval(t2) }
-  }, [headers])
+    aliveRef.current = true
+    loadGen(); loadTrain()
+    const t1 = setInterval(loadTrain, 4000)
+    const t2 = setInterval(loadGen, 10000)
+    return () => { aliveRef.current = false; clearInterval(t1); clearInterval(t2) }
+  }, [])
 
-  // aggregate stats
   const stats = useMemo(() => {
     if (!records.length) return null
     const succ = records.filter((r) => r.success)
@@ -309,88 +536,92 @@ function App() {
   }, [records, filterMode, sortKey])
 
   return (
+    <>
+      {error && <div className="alert-error">{error}</div>}
+      {stats && (
+        <div className="stats-row">
+          <div className="stat-card"><div className="stat-value">{stats.total}</div><div className="stat-label">总请求数</div><div className="stat-sub">{stats.sleepCount} 睡前 / {stats.normalCount} 普通</div></div>
+          <div className={`stat-card ${stats.succRate >= 90 ? 'accent-green' : 'accent-red'}`}><div className="stat-value">{stats.succRate}%</div><div className="stat-label">成功率</div><div className="stat-sub">{stats.failCount ? `${stats.failCount} 次失败` : '无失败'}</div></div>
+          <div className="stat-card accent-blue"><div className="stat-value">{stats.avgFirstAudio ? fmtMs(stats.avgFirstAudio) : '—'}</div><div className="stat-label">平均首包</div><div className="stat-sub">首段音频就绪</div></div>
+          <div className="stat-card"><div className="stat-value">{stats.avgTotal ? fmtMs(stats.avgTotal) : '—'}</div><div className="stat-label">平均总耗时</div><div className="stat-sub">全部播放完成</div></div>
+          <div className="stat-card accent-purple"><div className="stat-value">{stats.avgDs ? fmtMs(stats.avgDs) : '—'}</div><div className="stat-label">平均 DeepSeek</div><div className="stat-sub">断句 API 耗时</div></div>
+          <div className="stat-card"><div className="stat-value">{stats.avgSegs ?? '—'}</div><div className="stat-label">平均分片数</div><div className="stat-sub">每次请求</div></div>
+        </div>
+      )}
+      <TrainingCard train={train} />
+      <section className="card">
+        <div className="card-header">
+          <h2 className="card-title">生成记录（最近 100 条）</h2>
+          <div className="filter-row">
+            <select className="filter-select" value={filterMode} onChange={(e) => setFilterMode(e.target.value)}>
+              <option value="all">全部模式</option>
+              <option value="sleep">睡前模式</option>
+              <option value="normal">普通模式</option>
+              <option value="fail">仅失败</option>
+            </select>
+            <select className="filter-select" value={sortKey} onChange={(e) => setSortKey(e.target.value)}>
+              <option value="time">按时间排序</option>
+              <option value="first_audio">按首包延迟</option>
+              <option value="total">按总耗时</option>
+            </select>
+          </div>
+        </div>
+        {filteredRecords.length === 0 ? (
+          <div className="muted center">暂无记录，先在首页触发“多卡断句流式”</div>
+        ) : (
+          <div className="rec-list">
+            {filteredRecords.map((rec) => <RecordCard key={rec.id} rec={rec} />)}
+          </div>
+        )}
+      </section>
+    </>
+  )
+}
+
+// ── App ──────────────────────────────────────────────────────────────────────
+function App() {
+  const [loggedIn, setLoggedIn] = useState(!!getJwt())
+  const [tab, setTab] = useState('gpu')
+
+  function logout() {
+    setJwt(''); setAdminUser(''); setLoggedIn(false)
+  }
+
+  // 每次渲染前校验 JWT 是否还在；其他 adminFetch 里会处理 401。
+  useEffect(() => {
+    function onStorage() { setLoggedIn(!!getJwt()) }
+    window.addEventListener('storage', onStorage)
+    return () => window.removeEventListener('storage', onStorage)
+  }, [])
+
+  if (!loggedIn) {
+    return <LoginScreen onLoggedIn={() => setLoggedIn(true)} />
+  }
+
+  return (
     <div className="page">
-      {/* ── top bar ── */}
       <header className="topbar">
         <div className="topbar-left">
           <div className="topbar-logo">M</div>
           <div>
             <h1 className="topbar-title">Meme C 管理后台</h1>
-            <p className="topbar-sub">多段分片 TTS 监控 · 训练进度</p>
+            <p className="topbar-sub">GPU 调度 · 生成记录 · 训练进度</p>
           </div>
         </div>
         <div className="topbar-right">
-          {lastRefresh && (
-            <span className="refresh-time">
-              上次刷新 {lastRefresh.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
-            </span>
-          )}
-          <button className="btn-refresh" onClick={refreshAll} disabled={loading}>
-            {loading ? '刷新中…' : '立即刷新'}
-          </button>
+          <span className="refresh-time">{getAdminUser() && `已登录 ${getAdminUser()}`}</span>
           <a className="btn-link" href="/">返回首页</a>
+          <button className="btn-link" onClick={logout}>退出登录</button>
         </div>
       </header>
 
+      <div className="tabs">
+        <button className={`tab ${tab === 'gpu' ? 'tab-active' : ''}`} onClick={() => setTab('gpu')}>GPU 调度</button>
+        <button className={`tab ${tab === 'records' ? 'tab-active' : ''}`} onClick={() => setTab('records')}>生成记录 · 训练</button>
+      </div>
+
       <div className="content">
-        {/* ── token ── */}
-        <div className="token-row">
-          <label className="token-label">管理 Token（可选）</label>
-          <input
-            className="token-input"
-            value={token}
-            onChange={(e) => setToken(e.target.value)}
-            placeholder="MEMEC_ADMIN_TOKEN"
-            type="password"
-          />
-        </div>
-
-        {error && <div className="alert-error">{error}</div>}
-
-        {/* ── aggregate stats ── */}
-        {stats && (
-          <div className="stats-row">
-            <StatsCard label="总请求数" value={stats.total} sub={`${stats.sleepCount} 睡前 / ${stats.normalCount} 普通`} />
-            <StatsCard label="成功率" value={`${stats.succRate}%`} sub={stats.failCount ? `${stats.failCount} 次失败` : '无失败'} accent={stats.succRate >= 90 ? 'accent-green' : 'accent-red'} />
-            <StatsCard label="平均首包" value={stats.avgFirstAudio ? fmtMs(stats.avgFirstAudio) : '—'} sub="首段音频就绪" accent="accent-blue" />
-            <StatsCard label="平均总耗时" value={stats.avgTotal ? fmtMs(stats.avgTotal) : '—'} sub="全部播放完成" />
-            <StatsCard label="平均 DeepSeek" value={stats.avgDs ? fmtMs(stats.avgDs) : '—'} sub="断句 API 耗时" accent="accent-purple" />
-            <StatsCard label="平均分片数" value={stats.avgSegs ?? '—'} sub="每次请求" />
-          </div>
-        )}
-
-        {/* ── training ── */}
-        <TrainingCard train={train} />
-
-        {/* ── records ── */}
-        <section className="card">
-          <div className="card-header">
-            <h2 className="card-title">生成记录（最近 100 条）</h2>
-            <div className="filter-row">
-              <select className="filter-select" value={filterMode} onChange={(e) => setFilterMode(e.target.value)}>
-                <option value="all">全部模式</option>
-                <option value="sleep">睡前模式</option>
-                <option value="normal">普通模式</option>
-                <option value="fail">仅失败</option>
-              </select>
-              <select className="filter-select" value={sortKey} onChange={(e) => setSortKey(e.target.value)}>
-                <option value="time">按时间排序</option>
-                <option value="first_audio">按首包延迟</option>
-                <option value="total">按总耗时</option>
-              </select>
-            </div>
-          </div>
-
-          {filteredRecords.length === 0 ? (
-            <div className="muted center">暂无记录，先在首页触发"多卡断句流式"</div>
-          ) : (
-            <div className="rec-list">
-              {filteredRecords.map((rec) => (
-                <RecordCard key={rec.id} rec={rec} />
-              ))}
-            </div>
-          )}
-        </section>
+        {tab === 'gpu' ? <GPUPanel /> : <RecordsPanel />}
       </div>
     </div>
   )

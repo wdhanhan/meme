@@ -75,6 +75,7 @@ CREATE TABLE IF NOT EXISTS cluster_nodes (
 );
 `,
 		`CREATE INDEX IF NOT EXISTS idx_cluster_nodes_last_seen ON cluster_nodes (last_seen_at DESC);`,
+		`ALTER TABLE cluster_nodes ADD COLUMN IF NOT EXISTS healthy_ports INTEGER[] NOT NULL DEFAULT '{}';`,
 	}
 
 	for _, stmt := range stmts {

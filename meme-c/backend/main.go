@@ -52,6 +52,7 @@ type ttsJob struct {
 	payload  []byte
 	wantsM4A bool
 	resultCh chan ttsResult
+	meta     InFlightInfo
 }
 
 type ttsResult struct {
@@ -463,6 +464,7 @@ func runTTSWorker(ctx context.Context, fishAPI string, queue chan ttsJob, client
 			if !ok {
 				return
 			}
+			pool.BeginJob(fishAPI, job.meta)
 			selectedAPI := fishAPI
 			upstreamURL := fmt.Sprintf("%s/v1/tts", fishAPI)
 			resp, body, err := doJSONPost(client, upstreamURL, job.payload)
@@ -518,6 +520,7 @@ func runTTSWorker(ctx context.Context, fishAPI string, queue chan ttsJob, client
 			default:
 				// 请求方已取消，丢弃结果避免 worker 阻塞。
 			}
+			pool.EndJob(fishAPI)
 		}
 	}
 }
@@ -532,11 +535,15 @@ func parseReferenceIDsFromBody(body []byte) ([]string, error) {
 	return parsed.ReferenceIDs, nil
 }
 
-func submitTTSJob(ctx context.Context, q chan ttsJob, payload []byte, wantsM4A bool) (ttsResult, error) {
+func submitTTSJob(ctx context.Context, q chan ttsJob, payload []byte, wantsM4A bool, meta InFlightInfo) (ttsResult, error) {
+	if meta.EnqueuedAt.IsZero() {
+		meta.EnqueuedAt = time.Now()
+	}
 	job := ttsJob{
 		payload:  payload,
 		wantsM4A: wantsM4A,
 		resultCh: make(chan ttsResult, 1),
+		meta:     meta,
 	}
 	select {
 	case q <- job:
@@ -650,7 +657,6 @@ func main() {
 	r := gin.Default()
 	authRequired := authRequiredMiddleware()
 
-	registerAdminRoutes(r)
 	db, err := sql.Open("postgres", cfg.DBDsn)
 	if err != nil {
 		panic(err)
@@ -660,7 +666,9 @@ func main() {
 	}
 	registerAuthRoutes(r, db)
 	registerClusterRoutes(r, db)
+	registerAdminRoutes(r, db, pool)
 	pool.StartReconciler(db, 10*time.Second)
+	pool.StartHealthChecker(10*time.Second, 2*time.Second)
 	initWorkshopWorker(workerCtx, db, cfg, pool)
 	registerWorkshopRoutes(r, db)
 	registerVoiceRoutes(r, db, cfg, pool)
@@ -740,7 +748,14 @@ func main() {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "no upstream available"})
 			return
 		}
-		result, jobErr := submitTTSJob(c.Request.Context(), targetQueue, payload, wantsM4A)
+		result, jobErr := submitTTSJob(c.Request.Context(), targetQueue, payload, wantsM4A, InFlightInfo{
+			JobID:       newGenerationID(),
+			TaskID:      newGenerationID(),
+			TaskKind:    "tts",
+			SegIndex:    0,
+			SegTotal:    1,
+			TextPreview: previewText(req.Text, 80),
+		})
 		if jobErr != nil {
 			c.JSON(http.StatusRequestTimeout, gin.H{"error": jobErr.Error()})
 			return
@@ -953,7 +968,14 @@ func main() {
 				firstPrefetchCh <- ttsResult{err: fmt.Errorf("no upstream for prefetch")}
 				return
 			}
-			res, jErr := submitTTSJob(reqCtx, q, payload, false)
+			res, jErr := submitTTSJob(reqCtx, q, payload, false, InFlightInfo{
+				JobID:       newGenerationID(),
+				TaskID:      rec.ID,
+				TaskKind:    "multi_segment",
+				SegIndex:    0,
+				SegTotal:    len(segments),
+				TextPreview: previewText(seg0Text, 80),
+			})
 			firstSegTTSMs = time.Since(tPref).Milliseconds()
 			if jErr != nil {
 				firstPrefetchCh <- ttsResult{err: jErr}
@@ -1053,7 +1075,14 @@ func main() {
 					}
 					return
 				}
-				res, jErr := submitTTSJob(reqCtx, q, payload, false)
+				res, jErr := submitTTSJob(reqCtx, q, payload, false, InFlightInfo{
+					JobID:       newGenerationID(),
+					TaskID:      rec.ID,
+					TaskKind:    "multi_segment",
+					SegIndex:    i,
+					SegTotal:    n,
+					TextPreview: previewText(segText, 80),
+				})
 				if jErr != nil {
 					select {
 					case ready[i] <- ttsResult{err: jErr}:

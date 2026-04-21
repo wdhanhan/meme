@@ -79,7 +79,10 @@ if [[ -z "${GPU_COUNT}" || "${GPU_COUNT}" -lt 1 ]]; then
   exit 1
 fi
 
-FISH_LISTEN_HOST="${TS_IP}" FISH_BASE_PORT="${FISH_BASE_PORT}" \
+# Fish units bind 0.0.0.0 so both the loopback (used by local probes) and the
+# tailscale IP (used by the backend scheduler) reach the API without baking a
+# specific IP into the unit file.
+FISH_BASE_PORT="${FISH_BASE_PORT}" \
   bash "${MEME_DIR}/setup_fish_s2_service.sh"
 
 for ((i=0; i<GPU_COUNT; i++)); do
@@ -113,6 +116,8 @@ cat > "${ENV_FILE}" <<EOF
 MEMEC_BACKEND_URL=${MEMEC_BACKEND_URL}
 MEMEC_CLUSTER_TOKEN=${MEMEC_CLUSTER_TOKEN}
 MEMEC_NODE_ID=${NODE_ID}
+MEMEC_FISH_BASE_PORT=${FISH_BASE_PORT}
+MEMEC_GPU_COUNT=${GPU_COUNT}
 EOF
 chmod 600 "${ENV_FILE}"
 
@@ -122,10 +127,31 @@ cat > "${HEARTBEAT_SCRIPT}" <<'EOF'
 set -euo pipefail
 # shellcheck disable=SC1091
 source /etc/memec-node.env
+
+BASE_PORT="${MEMEC_FISH_BASE_PORT:-8080}"
+GPU_COUNT="${MEMEC_GPU_COUNT:-1}"
+
+# Probe every port this node *should* be serving via loopback. Only report
+# ports that respond to /v1/references/list as healthy. This is what anchors
+# the backend scheduler to reality instead of the nvidia-smi theoretical count.
+healthy=()
+for ((i=0; i<GPU_COUNT; i++)); do
+  PORT=$((BASE_PORT + i))
+  if curl -fsS --max-time 2 "http://127.0.0.1:${PORT}/v1/references/list?format=json" >/dev/null 2>&1; then
+    healthy+=("${PORT}")
+  fi
+done
+
+if [[ ${#healthy[@]} -eq 0 ]]; then
+  HP_JSON="[]"
+else
+  HP_JSON="[$(IFS=,; echo "${healthy[*]}")]"
+fi
+
 curl -fsS --max-time 10 \
   -H "Content-Type: application/json" \
   -H "X-Cluster-Token: ${MEMEC_CLUSTER_TOKEN}" \
-  -d "{\"node_id\":\"${MEMEC_NODE_ID}\"}" \
+  -d "{\"node_id\":\"${MEMEC_NODE_ID}\",\"healthy_ports\":${HP_JSON}}" \
   "${MEMEC_BACKEND_URL}/api/internal/nodes/heartbeat" >/dev/null
 EOF
 chmod 755 "${HEARTBEAT_SCRIPT}"

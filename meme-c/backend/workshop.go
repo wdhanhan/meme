@@ -264,7 +264,14 @@ func (w *workshopWorker) processJob(ctx context.Context, jobID int64) {
 				return
 			}
 			tTTS := time.Now()
-			ttsRes, jErr := submitTTSJob(ctx, q, payload, false)
+			ttsRes, jErr := submitTTSJob(ctx, q, payload, false, InFlightInfo{
+				JobID:       newGenerationID(),
+				TaskID:      fmt.Sprintf("workshop-%d", jobID),
+				TaskKind:    "workshop",
+				SegIndex:    idx,
+				SegTotal:    len(segments),
+				TextPreview: previewText(segText, 80),
+			})
 			ttsDur := time.Since(tTTS).Milliseconds()
 			if jErr != nil {
 				resultCh <- segResult{idx: idx, err: jErr}
