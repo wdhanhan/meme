@@ -70,6 +70,7 @@ type UpstreamPool struct {
 	queueSize         int
 	perGPUConcurrency int
 	rr                uint64 // 空闲打平用的轮询计数器
+	articleRR         uint64 // 多段文章起始偏移，避免所有文章挤到同一批卡
 }
 
 func NewUpstreamPool(ctx context.Context, staticAPIs []string, queueSize, perGPUConcurrency int, client *http.Client) *UpstreamPool {
@@ -97,6 +98,15 @@ func NewUpstreamPool(ctx context.Context, staticAPIs []string, queueSize, perGPU
 
 // PerGPUConcurrency 暴露给外部统计用。
 func (p *UpstreamPool) PerGPUConcurrency() int { return p.perGPUConcurrency }
+
+// NextArticleOffset 为一整篇多段文章分配一个起始偏移量，供后续 PickForSegment 使用：
+// caller 传入 (segIndex + offset) 作为 segIndex，就能让不同文章在 GPU 环上错开起点，
+// 避免「每篇文章的段 0 都打到同一张卡」导致的后段 GPU 长期空闲问题。
+// 返回值是非负 int，方便直接做模运算，不需要调用方再做溢出保护。
+func (p *UpstreamPool) NextArticleOffset() int {
+	v := atomic.AddUint64(&p.articleRR, 1)
+	return int(v & 0x7fffffff)
+}
 
 func (p *UpstreamPool) Snapshot() []string {
 	p.mu.RLock()

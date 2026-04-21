@@ -22,13 +22,14 @@ import (
 )
 
 type AppConfig struct {
-	ListenAddr        string
-	FishAPIs          []string
-	TimeoutSec        int
-	MaxNewTokens      int
-	QueueSize         int
-	PerGPUConcurrency int
-	DBDsn             string
+	ListenAddr            string
+	FishAPIs              []string
+	TimeoutSec            int
+	MaxNewTokens          int
+	QueueSize             int
+	PerGPUConcurrency     int
+	WorkshopMaxConcurrent int
+	DBDsn                 string
 }
 
 type TTSRequest struct {
@@ -702,12 +703,13 @@ func streamFromUpstream(c *gin.Context, client *http.Client, upstreamURL string,
 
 func main() {
 	cfg := AppConfig{
-		ListenAddr:        envOrDefault("MEMEC_BACKEND_LISTEN", "127.0.0.1:8090"),
-		FishAPIs:          parseFishAPIs(),
-		TimeoutSec:        envIntOrDefault("HTTP_TIMEOUT_SEC", 300),
-		MaxNewTokens:      envIntOrDefault("DEFAULT_MAX_NEW_TOKENS", 1024),
-		QueueSize:         envIntOrDefault("TTS_QUEUE_SIZE", 64),
-		PerGPUConcurrency: envIntOrDefault("TTS_PER_GPU_CONCURRENCY", 2),
+		ListenAddr:            envOrDefault("MEMEC_BACKEND_LISTEN", "127.0.0.1:8090"),
+		FishAPIs:              parseFishAPIs(),
+		TimeoutSec:            envIntOrDefault("HTTP_TIMEOUT_SEC", 300),
+		MaxNewTokens:          envIntOrDefault("DEFAULT_MAX_NEW_TOKENS", 1024),
+		QueueSize:             envIntOrDefault("TTS_QUEUE_SIZE", 64),
+		PerGPUConcurrency:     envIntOrDefault("TTS_PER_GPU_CONCURRENCY", 2),
+		WorkshopMaxConcurrent: envIntOrDefault("WORKSHOP_MAX_CONCURRENT", 20),
 		DBDsn: envOrDefault(
 			"MEMEC_POSTGRES_DSN",
 			"postgres://memec:memec@127.0.0.1:5432/memec?sslmode=disable",
@@ -1021,6 +1023,9 @@ func main() {
 		rec.DeepSeekMs = time.Since(tPrep).Milliseconds()
 		rec.OptimizeMs = rec.DeepSeekMs
 
+		// 本次多段流为整篇文章取一个起始偏移，错开与其他并发文章的起点。
+		articleOffset := pool.NextArticleOffset()
+
 		var firstPrefetchCh chan ttsResult
 		var firstSegTTSMs int64
 		firstPrefetchCh = make(chan ttsResult, 1)
@@ -1034,7 +1039,7 @@ func main() {
 				firstPrefetchCh <- ttsResult{err: err}
 				return
 			}
-			_, q, ok := pool.PickForSegment(0, prefReq)
+			_, q, ok := pool.PickForSegment(articleOffset, prefReq)
 			if !ok {
 				firstPrefetchCh <- ttsResult{err: fmt.Errorf("no upstream for prefetch")}
 				return
@@ -1065,7 +1070,7 @@ func main() {
 
 		upstreamPlan := make([]string, len(segments))
 		for i := range segments {
-			api, _, ok := pool.PickForSegment(i, ttsBase)
+			api, _, ok := pool.PickForSegment(i+articleOffset, ttsBase)
 			if !ok {
 				c.JSON(http.StatusServiceUnavailable, gin.H{"error": "no upstream available"})
 				return
@@ -1138,7 +1143,7 @@ func main() {
 					}
 					return
 				}
-				_, q, ok := pool.PickForSegment(i, segReq)
+				_, q, ok := pool.PickForSegment(i+articleOffset, segReq)
 				if !ok {
 					select {
 					case ready[i] <- ttsResult{err: fmt.Errorf("no upstream available")}:

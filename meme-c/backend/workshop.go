@@ -115,12 +115,20 @@ func tidyPauseTags(s string) string {
 }
 
 func initWorkshopWorker(ctx context.Context, db *sql.DB, cfg AppConfig, pool *UpstreamPool) {
+	maxConc := cfg.WorkshopMaxConcurrent
+	if maxConc < 1 {
+		maxConc = 1
+	}
+	chanSize := maxConc * 4
+	if chanSize < 128 {
+		chanSize = 128
+	}
 	globalWorkshopWorker = &workshopWorker{
 		db:    db,
 		cfg:   cfg,
 		pool:  pool,
-		jobCh: make(chan int64, 128),
-		sem:   make(chan struct{}, 3),
+		jobCh: make(chan int64, chanSize),
+		sem:   make(chan struct{}, maxConc),
 	}
 	globalWorkshopWorker.start(ctx)
 }
@@ -146,14 +154,21 @@ func (w *workshopWorker) start(ctx context.Context) {
 			}
 		}()
 
-		// Poller: every 15s pick up any pending jobs that missed channel notification.
+		// Poller: every 5s pick up any pending jobs that missed channel notification.
+		// 轮询 LIMIT 与并发上限挂钩，避免大批 pending 被 LIMIT 卡住饿不到 GPU。
+		pollLimit := w.cfg.WorkshopMaxConcurrent * 4
+		if pollLimit < 50 {
+			pollLimit = 50
+		}
 		go func() {
-			ticker := time.NewTicker(15 * time.Second)
+			ticker := time.NewTicker(5 * time.Second)
 			defer ticker.Stop()
 			for {
 				select {
 				case <-ticker.C:
-					rows, err := w.db.QueryContext(ctx, `SELECT id FROM workshop_jobs WHERE status='pending' ORDER BY created_at ASC LIMIT 10`)
+					rows, err := w.db.QueryContext(ctx,
+						`SELECT id FROM workshop_jobs WHERE status='pending' ORDER BY created_at ASC LIMIT $1`,
+						pollLimit)
 					if err != nil {
 						continue
 					}
@@ -265,6 +280,10 @@ func (w *workshopWorker) processJob(ctx context.Context, jobID int64) {
 	}
 	resultCh := make(chan segResult, len(segments))
 
+	// 为本篇文章取一个起始偏移，确保不同文章在 GPU 环上错开起点，
+	// 避免所有文章的 seg 0 都挤在同一张卡上。
+	articleOffset := w.pool.NextArticleOffset()
+
 	// Launch all segments in parallel.
 	for i, seg := range segments {
 		go func(idx int, segText string) {
@@ -275,7 +294,7 @@ func (w *workshopWorker) processJob(ctx context.Context, jobID int64) {
 				resultCh <- segResult{idx: idx, err: marshalErr}
 				return
 			}
-			_, q, ok := w.pool.PickForSegment(idx, segReq)
+			_, q, ok := w.pool.PickForSegment(idx+articleOffset, segReq)
 			if !ok {
 				resultCh <- segResult{idx: idx, err: fmt.Errorf("no upstream available")}
 				return
