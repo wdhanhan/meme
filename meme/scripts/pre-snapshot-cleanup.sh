@@ -60,8 +60,12 @@ echo "[cleanup] removing baked secrets from repo (.env.*.local must come from us
 find /root/meme -maxdepth 6 -name '.env.*.local' -not -path '*/.venvs/*' -not -path '*/node_modules/*' -print -delete 2>/dev/null || true
 
 echo "[cleanup] clearing tmp + user caches"
+# Intentionally preserve /root/meme/.cache/{torchinductor,triton} — fish units
+# point there via TORCHINDUCTOR_CACHE_DIR / TRITON_CACHE_DIR so the compiled
+# kernels ship with the image and clones skip the ~30s first-request compile.
 rm -rf /tmp/* /tmp/.[!.]* /var/tmp/* 2>/dev/null || true
 rm -rf /root/.cache/pip /root/.cache/huggingface /root/.cache/modelscope /root/.cache/torch 2>/dev/null || true
+rm -rf /root/.triton 2>/dev/null || true
 
 echo "[cleanup] removing developer/IDE state (cursor, vscode)"
 rm -rf /root/.cursor /root/.cursor-server /root/.vscode-server 2>/dev/null || true

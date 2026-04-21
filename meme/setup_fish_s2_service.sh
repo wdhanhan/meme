@@ -22,6 +22,13 @@ LISTEN_HOST="${FISH_LISTEN_HOST:-0.0.0.0}"
 # S2 Pro loads ~6GB after --compile warm-up, so anything under ~8GB is a
 # restart loop waiting to happen. Override via FISH_MIN_FREE_VRAM_MB=0 to skip.
 MIN_FREE_VRAM_MB="${FISH_MIN_FREE_VRAM_MB:-8000}"
+# Persistent torch.compile + triton kernel caches. Default path lives under the
+# repo so the snapshot cleanup (which wipes /tmp/*) keeps it intact — clones
+# boot with the compiled kernels already on disk and skip the ~30s cold compile
+# on first TTS request. Override via FISH_TORCH_CACHE_DIR= to relocate.
+TORCH_CACHE_DIR="${FISH_TORCH_CACHE_DIR:-${ROOT_DIR}/.cache/torchinductor}"
+TRITON_CACHE_DIR_VAL="${FISH_TRITON_CACHE_DIR:-${ROOT_DIR}/.cache/triton}"
+mkdir -p "${TORCH_CACHE_DIR}" "${TRITON_CACHE_DIR_VAL}"
 
 if [[ ! -x "${VENV_PY}" ]]; then
   echo "[ERROR] Python venv not found: ${VENV_PY}"
@@ -116,6 +123,8 @@ User=root
 WorkingDirectory=${WORKDIR}
 Environment=PYTHONUNBUFFERED=1
 Environment=CUDA_VISIBLE_DEVICES=${GPU_ID}
+Environment=TORCHINDUCTOR_CACHE_DIR=${TORCH_CACHE_DIR}
+Environment=TRITON_CACHE_DIR=${TRITON_CACHE_DIR_VAL}
 # 每个实例绑定单卡并独立监听端口。
 ExecStart=${VENV_PY} tools/api_server.py --llama-checkpoint-path ${MODEL_DIR} --decoder-checkpoint-path ${MODEL_DIR}/codec.pth --listen ${LISTEN_HOST}:${PORT} --device cuda --compile --workers 1
 Restart=always
