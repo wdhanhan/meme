@@ -10,11 +10,14 @@ fish_compute_fish_api_bases() {
     if command -v nvidia-smi >/dev/null 2>&1; then
       GPU_COUNT="$(nvidia-smi -L | wc -l | tr -d ' ')"
     else
-      GPU_COUNT=1
+      # No nvidia-smi means this is a backend-only / scheduler node. Do not
+      # pollute FISH_API_BASES with a bogus 127.0.0.1 entry — upstreams will
+      # come from DB reconciler for cluster GPU nodes.
+      GPU_COUNT=0
     fi
   fi
-  if [[ -z "${GPU_COUNT}" || "${GPU_COUNT}" -lt 1 ]]; then
-    GPU_COUNT=1
+  if [[ -z "${GPU_COUNT}" || "${GPU_COUNT}" -lt 0 ]]; then
+    GPU_COUNT=0
   fi
 
   # Only honor a caller-supplied FISH_API_BASES when it's explicitly pinned.
@@ -26,6 +29,9 @@ fish_compute_fish_api_bases() {
   fi
 
   FISH_API_BASES=""
+  if [[ "${GPU_COUNT}" -eq 0 ]]; then
+    return 0
+  fi
   if [[ -n "${FISH_REMOTE_HOST:-}" ]]; then
     local GPU_ID PORT
     for ((GPU_ID = 0; GPU_ID < GPU_COUNT; GPU_ID++)); do

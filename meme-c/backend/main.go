@@ -439,7 +439,9 @@ func envIntOrDefault(key string, fallback int) int {
 }
 
 func parseFishAPIs() []string {
-	if raw := strings.TrimSpace(os.Getenv("FISH_API_BASES")); raw != "" {
+	// Distinguish "unset" (dev box → default to localhost) from "set but empty"
+	// (backend-only cluster node → rely purely on DB reconciler, no static).
+	if raw, present := os.LookupEnv("FISH_API_BASES"); present {
 		parts := strings.Split(raw, ",")
 		apis := make([]string, 0, len(parts))
 		for _, part := range parts {
@@ -448,9 +450,7 @@ func parseFishAPIs() []string {
 				apis = append(apis, v)
 			}
 		}
-		if len(apis) > 0 {
-			return apis
-		}
+		return apis
 	}
 	return []string{envOrDefault("FISH_API_BASE", "http://127.0.0.1:8080")}
 }
