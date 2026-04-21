@@ -44,3 +44,6 @@ meme/fish-audio-s2-pro/
 # Binaries
 meme-c/backend/backend
 meme-c/backend/meme-c-backend
+
+# torch.compile / triton kernel cache (baked into GPU image, not source)
+.cache/
