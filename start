@@ -191,6 +191,7 @@ start_meme_c() {
 
 start_front() {
   local front_dir="${ROOT_DIR}/meme-front-c-v2"
+  local admin_front_dir="${ROOT_DIR}/meme-c/frontend-admin"
   local front_log="${LOG_DIR}/meme-front-c-v2.log"
   local nginx_site_path="/etc/nginx/sites-available/${FRONT_NGINX_SITE}"
   local nginx_site_enabled="/etc/nginx/sites-enabled/${FRONT_NGINX_SITE}"
@@ -255,6 +256,30 @@ start_front() {
     done
 
     return 1
+  }
+
+  sync_memec_admin_frontend() {
+    local admin_dist_dir="${FRONT_DIST_DIR}/admin"
+    if [[ ! -f "${admin_front_dir}/package.json" ]]; then
+      echo "[WARN] Skip meme-c admin deploy: ${admin_front_dir}/package.json not found."
+      return 0
+    fi
+
+    if [[ "$FRONT_INSTALL" -eq 1 ]]; then
+      (cd "${admin_front_dir}" && npm install)
+    elif [[ ! -x "${admin_front_dir}/node_modules/.bin/vite" ]]; then
+      echo "[ERROR] meme-c admin dependencies are missing (vite not found)."
+      echo "        Run once with default install or execute:"
+      echo "        cd ${admin_front_dir} && npm install"
+      return 1
+    fi
+
+    (cd "${admin_front_dir}" && npm run build)
+    mkdir -p "${admin_dist_dir}"
+    rm -rf "${admin_dist_dir:?}/"*
+    cp -rf "${admin_front_dir}/dist/"* "${admin_dist_dir}/"
+    chmod -R a+rX "${admin_dist_dir}"
+    echo "[OK] meme-c admin deployed at /admin/."
   }
 
   # 仅保留本站点的 sites-enabled 启用项，其余全部停用（避免其它 vhost 抢占 server_name / 端口）。
@@ -369,6 +394,7 @@ start_front() {
     rm -rf "${FRONT_DIST_DIR:?}/"*
     cp -rf "${front_dir}/dist/"* "$FRONT_DIST_DIR/"
     chmod -R a+rX "$FRONT_DIST_DIR"
+    sync_memec_admin_frontend
 
     mkdir -p "$ssl_dir"
     mkdir -p "$PROJECT_CERT_DIR"
